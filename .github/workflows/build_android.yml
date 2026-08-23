@@ -22,14 +22,13 @@ jobs:
         options: -v ${{ github.workspace }}:/home/user/app -w /home/user/app
         run: |
           set -eux
-          # create venv, activate
           python -m venv .venv
           . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install buildozer python-Levenshtein
-          # run buildozer non-interactive as root
-          BUILDOZER_ALLOW_ROOT=1 buildozer --allow-root -v android debug
-          # give files back to runner user so artifact upload can read them
+          # pipe "yes" so buildozer won't block on root confirmation
+          yes | BUILDOZER_ALLOW_ROOT=1 buildozer --allow-root -v android debug
+          # make files readable by runner user
           chown -R 1000:1000 /home/user/app || true
 
     - name: Upload APK
