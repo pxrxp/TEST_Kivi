@@ -58,7 +58,7 @@ android.skip_updates = False
 
 # (bool) If True, accept the 31.0.0 NDK license agreement (set to
 # False if you don't have a license or if you don't want to accept the license).
-android.accept_ndk_license = False
+android.accept_ndk_license = True
 
 # (str) Android entry point, default is ok for Kivy-based app
 #android.entrypoint = org.renpy.android.PythonActivity
@@ -95,3 +95,7 @@ android.arch = arm64-v8a
 # (list) python-for-android specific arguments
 # e.g. android.add_args = --verbose
 android.add_args = --kivy-ios.use_frameworks=1
+
+# ---- Added by CI fix ----
+# (str) App version (required by buildozer)
+version = 0.1.0
