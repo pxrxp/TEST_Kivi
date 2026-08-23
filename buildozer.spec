@@ -9,7 +9,7 @@ package.domain = org.test
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,onnx
 
-requirements = python3.12,kivy,opencv,numpy,scipy,plyer,onnxruntime
+requirements = python3.12,kivy,opencv,numpy==1.26.4,scipy==1.13.1,plyer,onnxruntime
 
 orientation = portrait
 
