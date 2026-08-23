@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout repo
       uses: actions/checkout@v4
 
     - name: Run Buildozer inside Docker (prebuilt Kivy tooling)
@@ -21,8 +21,12 @@ jobs:
         options: --user 1000:1000 -v ${{ github.workspace }}:/home/user/app -w /home/user/app
         run: |
           set -eux
-          pip install --upgrade pip
-          # optional: add build-time python deps here, e.g. pip install cython
+          # create venv inside repo so pip upgrade writable
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install buildozer python-Levenshtein
+          # optional: add build-time deps here, e.g. pip install cython==0.29.35
           buildozer -v android debug
 
     - name: Upload APK
