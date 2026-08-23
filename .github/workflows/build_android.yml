@@ -18,16 +18,19 @@ jobs:
       uses: addnab/docker-run-action@v3
       with:
         image: kivy/buildozer:latest
-        options: --user 1000:1000 -v ${{ github.workspace }}:/home/user/app -w /home/user/app
+        # run as root inside container so venv and installs succeed; we'll chown back to runner UID after
+        options: -v ${{ github.workspace }}:/home/user/app -w /home/user/app
         run: |
           set -eux
-          # create venv inside repo so pip upgrade writable
+          # create venv inside repo (root can write)
           python -m venv .venv
           . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install buildozer python-Levenshtein
-          # optional: add build-time deps here, e.g. pip install cython==0.29.35
+          # run build
           buildozer -v android debug
+          # make files writable by runner (uid 1000) so upload works
+          chown -R 1000:1000 /home/user/app || true
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
