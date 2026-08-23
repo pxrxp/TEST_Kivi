@@ -18,19 +18,16 @@ jobs:
       uses: addnab/docker-run-action@v3
       with:
         image: kivy/buildozer:latest
-        # mount the workspace into the container and run as the current user to avoid permission issues
         options: --user 1000:1000 -v ${{ github.workspace }}:/home/user/app -w /home/user/app
         run: |
           set -eux
-          # Make sure pip inside container is recent and install any python deps your buildozer.spec needs
           pip install --upgrade pip
-          # Optional: install additional Python packages needed at build-time (example)
-          # pip install cython==0.29.35
-          # Run the build
+          # optional: add build-time python deps here, e.g. pip install cython
           buildozer -v android debug
 
     - name: Upload APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: skyline-geolocation-apk
         path: bin/*.apk
+        if-no-files-found: ignore
