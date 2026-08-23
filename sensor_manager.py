@@ -12,28 +12,30 @@ from typing import Dict, Any
 
 class MockAccelerometer:
     """Mock accelerometer for desktop testing."""
-    
+
     def enable(self):
         pass
-    
+
     def disable(self):
         pass
 
 
 class MockCompass:
     """Mock compass for desktop testing."""
-    
+
     def enable(self):
         pass
-    
+
     def disable(self):
         pass
 
 
 try:
     from plyer import accelerometer, compass
+    # Test if platform module actually exists
+    _ = compass.heading
     PLYER_AVAILABLE = True
-except (ImportError, Exception):
+except (ImportError, ModuleNotFoundError, NotImplementedError, AttributeError, Exception):
     PLYER_AVAILABLE = False
     accelerometer = MockAccelerometer()
     compass = MockCompass()
@@ -123,7 +125,7 @@ class SensorManager:
     def _compute_pitch_roll(self, ax: float, ay: float, az: float) -> tuple:
         """
         Compute pitch and roll from accelerometer readings.
-        
+
         pitch = arctan2(ay, sqrt(ax^2 + az^2)) * 180/pi
         roll  = arctan2(-ax, az) * 180/pi
         """
@@ -153,8 +155,7 @@ class SensorManager:
 
     def is_level(self, tolerance: float = DEFAULT_TOLERANCE) -> bool:
         """Check if phone is level within tolerance (both pitch and roll)."""
-        return (abs(self._pitch_deg) <= tolerance and 
-                abs(self._roll_deg) <= tolerance)
+        return abs(self._pitch_deg) <= tolerance and abs(self._roll_deg) <= tolerance
 
     def get_level_status(self) -> str:
         """Get human-readable leveling instructions."""
@@ -170,7 +171,7 @@ class SensorManager:
             return "LEVEL PHONE"
 
     def get_horizon_color(self) -> tuple:
-        """Return (r, g, b) color for horizon line based on level status."""
+        """Return (r, g, b) color (0-255 int) for horizon line based on level status."""
         if self.is_level():
             return (0, 255, 0)  # Green
         elif abs(self._pitch_deg) <= 5.0:
@@ -197,8 +198,7 @@ class SensorManager:
         """Returns True if using mock sensors (desktop testing)."""
         return not self._sensor_available
 
-    def set_mock_values(self, pitch_deg: float, roll_deg: float, 
-                      heading_deg: float):
+    def set_mock_values(self, pitch_deg: float, roll_deg: float, heading_deg: float):
         """Set mock sensor values for testing."""
         self._pitch_deg = pitch_deg
         self._roll_deg = roll_deg

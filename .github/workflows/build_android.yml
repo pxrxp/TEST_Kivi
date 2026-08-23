@@ -18,6 +18,7 @@ jobs:
       uses: addnab/docker-run-action@v3
       with:
         image: kivy/buildozer:latest
+        python_version: 3.12
         # run as root so venv and installs succeed; chown back after build
         options: -v ${{ github.workspace }}:/home/user/app -w /home/user/app
         run: |

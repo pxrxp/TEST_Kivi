@@ -29,8 +29,14 @@ class CameraOverlay(FloatLayout):
     - Visual text prompts for tilt correction
     """
 
-    def __init__(self, camera: Any, screen_width: int, screen_height: int,
-                 fov_y_deg: float = 65.0, **kwargs):
+    def __init__(
+        self,
+        camera: Any,
+        screen_width: int,
+        screen_height: int,
+        fov_y_deg: float = 65.0,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.camera = camera
         self.screen_width = screen_width
@@ -66,56 +72,54 @@ class CameraOverlay(FloatLayout):
         self._update_event = None
 
     def _init_drawables(self):
-        """Initialize all drawable graphics elements."""
+        """Initialize all drawable graphics elements (canvas + widgets)."""
+        # 1. Canvas Graphics Instructions ONLY (Color, Rectangle, Line)
         with self.canvas:
-            # Camera background rectangle
-            self.bg_color = Color(0, 0, 0, 1)
+            self.bg_color = Color(0.0, 0.0, 0.0, 1.0)
             self.bg_rect = Rectangle(pos=self.pos, size=self.size)
 
-            # Crosshair
-            self.crosshair_color = Color(0, 255, 0, 1)  # Default green
+            self.crosshair_color = Color(0.0, 1.0, 0.0, 1.0)
             self.crosshair = Line(
-                rectangle=(0, 0, 0, 0),
-                width=self.crosshair_line_width
+                rectangle=(0, 0, 0, 0), width=self.crosshair_line_width
             )
 
-            # Horizon line
-            self.horizon_color = Color(0, 255, 0, 1)  # Green by default
-            self.horizon_line = Line(
-                points=[],
-                width=self.horizon_line_width
+            self.horizon_color = Color(0.0, 1.0, 0.0, 1.0)
+            self.horizon_line = Line(points=[], width=self.horizon_line_width)
+
+            self.banner_color = Color(0.0, 0.0, 0.0, 0.7)
+            self.banner_rect = Rectangle(
+                pos=(0, self.screen_height - 50), size=(self.screen_width, 50)
             )
 
-            # Status banner background
-            self.banner_color = Color(0, 0, 0, 0.7)
-            self.banner_rect = Rectangle(pos=(0, self.screen_height - 50), 
-                                         size=(self.screen_width, 50))
+        # 2. Add Kivy Widgets Separately (NOT inside canvas context)
+        self.status_label = Label(
+            text=self.status_text,
+            color=(0.0, 1.0, 0.0, 1.0),
+            font_size="18sp",
+            size_hint=(1, None),
+            height=30,
+            pos=(0, self.screen_height - 45),
+        )
+        self.pitch_label = Label(
+            text="PITCH: 0.0°",
+            color=(0.0, 1.0, 0.0, 1.0),
+            font_size="14sp",
+            size_hint=(0.5, None),
+            height=20,
+            pos=(self.screen_width * 0.05, self.screen_height - 30),
+        )
+        self.roll_label = Label(
+            text="ROLL: 0.0°",
+            color=(0.0, 1.0, 0.0, 1.0),
+            font_size="14sp",
+            size_hint=(0.5, None),
+            height=20,
+            pos=(self.screen_width * 0.5, self.screen_height - 30),
+        )
 
-            # Status text
-            self.status_label = Label(
-                text=self.status_text,
-                color=(0, 255, 0, 1),
-                font_size='18sp',
-                size_hint=(1, 0.5),
-                pos_hint={'x': 0, 'y': self.screen_height - 45}
-            )
-
-            # Pitch/roll info labels
-            self.pitch_label = Label(
-                text="PITCH: 0.0°",
-                color=(0, 255, 0, 1),
-                font_size='14sp',
-                size_hint=(0.5, 0.5),
-                pos_hint={'x': 0.1, 'y': self.screen_height - 30}
-            )
-
-            self.roll_label = Label(
-                text="ROLL: 0.0°",
-                color=(0, 255, 0, 1),
-                font_size='14sp',
-                size_hint=(0.5, 0.5),
-                pos_hint={'x': 0.5, 'y': self.screen_height - 30}
-            )
+        self.add_widget(self.status_label)
+        self.add_widget(self.pitch_label)
+        self.add_widget(self.roll_label)
 
         # Bind to resize events
         self.bind(pos=self._update_pos, size=self._update_size)
@@ -139,11 +143,16 @@ class CameraOverlay(FloatLayout):
         cy = self.screen_height // 2
         half = self.crosshair_size
         self.crosshair.points = [
-            cx - half, cy,
-            cx, cy - half,
-            cx + half, cy,
-            cx, cy + half,
-            cx - half, cy,
+            cx - half,
+            cy,
+            cx,
+            cy - half,
+            cx + half,
+            cy,
+            cx,
+            cy + half,
+            cx - half,
+            cy,
         ]
 
         # Horizon line (spans from left to right at center)
@@ -156,12 +165,12 @@ class CameraOverlay(FloatLayout):
         self.banner_rect.pos = (0, self.screen_height - 50)
         self.banner_rect.size = (self.screen_width, 50)
 
-        # Status label
-        self.status_label.pos_hint = {'x': 0, 'y': self.screen_height - 45}
+        # Status label - use absolute pos (NOT pos_hint with pixel y values)
+        self.status_label.pos = (0, self.screen_height - 45)
 
-        # Pitch/roll labels
-        self.pitch_label.pos_hint = {'x': 0.1, 'y': self.screen_height - 30}
-        self.roll_label.pos_hint = {'x': 0.5, 'y': self.screen_height - 30}
+        # Pitch/roll labels - use absolute pos
+        self.pitch_label.pos = (self.screen_width * 0.05, self.screen_height - 30)
+        self.roll_label.pos = (self.screen_width * 0.5, self.screen_height - 30)
 
     def update_sensor_data(self, sensor_manager):
         """Update from sensor manager and refresh display."""
@@ -188,32 +197,32 @@ class CameraOverlay(FloatLayout):
         self.crosshair_color.rgb = (r / 255.0, g / 255.0, b / 255.0)
         self.horizon_color.rgb = (r / 255.0, g / 255.0, b / 255.0)
 
-        # Update status text
+        # Update status text - colors normalized to [0.0, 1.0]
         if is_level:
             self.status_text = "LEVEL PHONE"
-            self.status_label.color = (0, 255, 0, 1)
-            self.pitch_label.color = (0, 255, 0, 1)
-            self.roll_label.color = (0, 255, 0, 1)
+            self.status_label.color = (0.0, 1.0, 0.0, 1.0)
+            self.pitch_label.color = (0.0, 1.0, 0.0, 1.0)
+            self.roll_label.color = (0.0, 1.0, 0.0, 1.0)
         elif abs(pitch) > 5.0:
             self.status_text = "TILT DOWN"
-            self.status_label.color = (255, 0, 0, 1)
-            self.pitch_label.color = (255, 0, 0, 1)
-            self.roll_label.color = (255, 0, 0, 1)
+            self.status_label.color = (1.0, 0.0, 0.0, 1.0)
+            self.pitch_label.color = (1.0, 0.0, 0.0, 1.0)
+            self.roll_label.color = (1.0, 0.0, 0.0, 1.0)
         elif pitch > 2.0:
             self.status_text = "TILT UP"
-            self.status_label.color = (255, 255, 0, 1)
-            self.pitch_label.color = (255, 255, 0, 1)
-            self.roll_label.color = (255, 255, 0, 1)
+            self.status_label.color = (1.0, 1.0, 0.0, 1.0)
+            self.pitch_label.color = (1.0, 1.0, 0.0, 1.0)
+            self.roll_label.color = (1.0, 1.0, 0.0, 1.0)
         elif abs(roll) > 2.0:
             self.status_text = "LEVEL PHONE"
-            self.status_label.color = (0, 255, 0, 1)
-            self.pitch_label.color = (0, 255, 0, 1)
-            self.roll_label.color = (0, 255, 0, 1)
+            self.status_label.color = (0.0, 1.0, 0.0, 1.0)
+            self.pitch_label.color = (0.0, 1.0, 0.0, 1.0)
+            self.roll_label.color = (0.0, 1.0, 0.0, 1.0)
         else:
             self.status_text = "HOLD LEVEL"
-            self.status_label.color = (255, 255, 0, 1)
-            self.pitch_label.color = (255, 255, 0, 1)
-            self.roll_label.color = (255, 255, 0, 1)
+            self.status_label.color = (1.0, 1.0, 0.0, 1.0)
+            self.pitch_label.color = (1.0, 1.0, 0.0, 1.0)
+            self.roll_label.color = (1.0, 1.0, 0.0, 1.0)
 
         # Store for access
         self._last_sensor_data = sensor_data
@@ -221,8 +230,7 @@ class CameraOverlay(FloatLayout):
     def start_update_loop(self, interval: float = 0.1):
         """Start the update loop for real-time sensor data."""
         if self._update_event is None:
-            self._update_event = Clock.schedule_interval(
-                self._update_loop, interval)
+            self._update_event = Clock.schedule_interval(self._update_loop, interval)
 
     def _update_loop(self, dt):
         """Internal update loop."""
@@ -238,10 +246,10 @@ class CameraOverlay(FloatLayout):
     def capture_photo(self) -> Optional[Tuple]:
         """
         Capture the current camera frame.
-        
+
         Returns tuple of (frame_surface, sensor_data) or None.
         """
-        if self.camera and hasattr(self.camera, 'texture'):
+        if self.camera and hasattr(self.camera, "texture"):
             texture = self.camera.texture
             if texture:
                 # Get pixel data from texture
@@ -251,11 +259,11 @@ class CameraOverlay(FloatLayout):
                     pixels = texture.pixels
                     width, height = texture.size
                     return {
-                        'texture': texture,
-                        'width': width,
-                        'height': height,
-                        'sensor_data': getattr(self, '_last_sensor_data', None),
-                        'timestamp': time.time()
+                        "texture": texture,
+                        "width": width,
+                        "height": height,
+                        "sensor_data": getattr(self, "_last_sensor_data", None),
+                        "timestamp": time.time(),
                     }
                 except Exception:
                     pass
@@ -266,10 +274,10 @@ class CameraOverlay(FloatLayout):
         self._capture_enabled = enabled
         if enabled:
             self.status_text = "LEVEL PHONE - CAPTURE READY"
-            self.status_label.color = (0, 255, 0, 1)
+            self.status_label.color = (0.0, 1.0, 0.0, 1.0)
         else:
             self.status_text = "TILT - ADJUST PHONE"
-            self.status_label.color = (255, 0, 0, 1)
+            self.status_label.color = (1.0, 0.0, 0.0, 1.0)
 
 
 class LevelBanner(BoxLayout):
@@ -279,29 +287,23 @@ class LevelBanner(BoxLayout):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.orientation = 'horizontal'
+        self.orientation = "horizontal"
         self.size_hint = (1, None)
         self.height = 40
-        self.pos_hint = {'y': 1}
+        self.pos_hint = {"y": 1}
         self.spacing = 10
 
-        # Level indicator
-        self.indicator_color = (0, 255, 0, 1)
+        # Level indicator (normalized floats)
+        self.indicator_color = (0.0, 1.0, 0.0, 1.0)
         self.indicator_size = 20
 
         # Text
         self.status_text = "HOLD LEVEL"
 
         # Add widgets
-        self.indicator = Label(
-            text="●",
-            color=self.indicator_color,
-            font_size='24sp'
-        )
+        self.indicator = Label(text="●", color=self.indicator_color, font_size="24sp")
         self.status_label = Label(
-            text=self.status_text,
-            color=self.indicator_color,
-            font_size='16sp'
+            text=self.status_text, color=self.indicator_color, font_size="16sp"
         )
 
         self.add_widget(self.indicator)
@@ -310,19 +312,19 @@ class LevelBanner(BoxLayout):
     def update_status(self, is_level: bool, pitch: float, roll: float):
         """Update the banner status display."""
         if is_level:
-            self.indicator_color = (0, 255, 0, 1)
+            self.indicator_color = (0.0, 1.0, 0.0, 1.0)
             self.status_text = "LEVEL"
         elif abs(pitch) > 5.0:
-            self.indicator_color = (255, 0, 0, 1)
+            self.indicator_color = (1.0, 0.0, 0.0, 1.0)
             self.status_text = "TILT DOWN"
         elif pitch > 2.0:
-            self.indicator_color = (255, 255, 0, 1)
+            self.indicator_color = (1.0, 1.0, 0.0, 1.0)
             self.status_text = "TILT UP"
         elif abs(roll) > 2.0:
-            self.indicator_color = (255, 165, 0, 1)  # Orange
+            self.indicator_color = (1.0, 0.65, 0.0, 1.0)  # Orange (normalized)
             self.status_text = "LEVEL PHONE"
         else:
-            self.indicator_color = (255, 255, 0, 1)
+            self.indicator_color = (1.0, 1.0, 0.0, 1.0)
             self.status_text = "HOLD LEVEL"
 
         self.indicator.color = self.indicator_color
