@@ -7,8 +7,8 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Pin target Python to 3.11.9 and numpy to 1.26.4 for guaranteed Android stability
-requirements = python3==3.11.9,kivy==2.3.0,plyer,pillow,numpy==1.26.4
+# Stable requirements using p4a's official Python 3.11 toolchain
+requirements = python3,kivy==2.3.0,plyer,pillow,numpy
 
 orientation = portrait
 
@@ -23,9 +23,6 @@ android.accept_ndk_license = True
 android.enable_androidx = True
 android.archs = arm64-v8a
 android.private_storage = True
-
-p4a.fork = kivy
-p4a.branch = master
 
 version = 0.1
 
