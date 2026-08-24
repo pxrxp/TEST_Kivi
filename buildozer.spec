@@ -9,7 +9,7 @@ package.domain = org.test
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,onnx
 
-requirements = kivy,opencv,numpy,scipy,plyer,onnxruntime
+requirements = kivy==2.3.0,opencv==4.5.2,numpy==1.26.4,plyer,onnxruntime
 
 orientation = portrait
 
@@ -20,11 +20,11 @@ android.minapi = 24
 android.ndk = 28c
 android.ndk_api = 24
 android.private_storage = True
-android.accept_ndk_license = False
+android.accept_ndk_license = True
 android.enable_androidx = True
 android.archs = arm64-v8a
 android.copy_libs = 1
-android.add_args = --kivy-ios.use_frameworks=1
+android.gradle_options = org.gradle.jvmargs=-Xmx4096m
 
 version = 0.1
 
