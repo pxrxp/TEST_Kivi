@@ -9,7 +9,7 @@ source.include_exts = py,png,jpg,kv,atlas,onnx
 
 # 1. Changed kivy>=2.4.0 to kivy==2.3.0
 # 2. Removed cython from requirements (it is handled on the host side)
-requirements = python3,kivy==2.3.0,plyer,onnxruntime
+requirements = python3,kivy==2.3.0,plyer,opencv
 
 orientation = portrait
 
