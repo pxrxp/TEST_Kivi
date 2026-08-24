@@ -1,15 +1,15 @@
 [app]
 
 title = Skyline Geolocation
-
 package.name = skylinegeolocation
-
 package.domain = org.test
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,onnx
 
-requirements = python3,kivy>=2.4.0,plyer,onnxruntime,cython>=3.0.11
+# 1. Changed kivy>=2.4.0 to kivy==2.3.0
+# 2. Removed cython from requirements (it is handled on the host side)
+requirements = python3,kivy==2.3.0,plyer,onnxruntime
 
 orientation = portrait
 
@@ -17,7 +17,7 @@ permissions = CAMERA
 
 android.api = 33
 android.minapi = 24
-android.ndk = 28c
+android.ndk = 25b
 android.ndk_api = 24
 android.private_storage = True
 android.accept_ndk_license = True
@@ -34,4 +34,3 @@ log_level = 2
 warn_on_root = 1
 build_dir = .buildozer
 bin_dir = bin
-
