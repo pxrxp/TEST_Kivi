@@ -15,7 +15,6 @@ TARGET_PYTHON = "3.14"  # kivy/buildozer:latest uses Python 3.14
 REQUIREMENTS = {
     "kivy": ">=2.3.0",
     "plyer": None,  # No version constraint
-    "onnxruntime": None,
     "numpy": ">=2.0.0",
     "opencv-python": ">=4.8.1.78",
 }
