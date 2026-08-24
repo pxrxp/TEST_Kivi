@@ -7,7 +7,7 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Pure recipe requirements (All 5 have official, tested p4a recipes)
+# All 5 packages have official, maintained recipes in p4a master
 requirements = python3,kivy==2.3.0,plyer,pillow,numpy
 
 orientation = portrait
@@ -23,6 +23,10 @@ android.accept_ndk_license = True
 android.enable_androidx = True
 android.archs = arm64-v8a
 android.private_storage = True
+
+# Pull latest python-for-android master (contains fixed numpy/ninja build recipes)
+p4a.fork = kivy
+p4a.branch = master
 
 version = 0.1
 
