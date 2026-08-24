@@ -27,11 +27,9 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel cython
           pip install buildozer python-Levenshtein
           
-          # Pre-install dependencies via pip to avoid git checkout issues
-          # Use compatible versions that work with buildozer's toolchain
-          pip install --no-binary :all: numpy==1.24.3
-          pip install opencv-python==4.8.1.78
-          pip install plyer onnxruntime
+          # Pre-install dependencies using pre-built wheels
+          # This bypasses git checkout errors and Python 3.14 compatibility issues
+          pip install numpy==1.24.3 opencv-python==4.8.1.78 plyer onnxruntime
           
           # pipe "yes" so buildozer won't block on root confirmation
           yes | BUILDOZER_ALLOW_ROOT=1 buildozer --allow-root -v android debug
@@ -44,4 +42,3 @@ jobs:
         name: skyline-geolocation-apk
         path: bin/*.apk
         if-no-files-found: ignore
-
