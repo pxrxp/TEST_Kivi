@@ -7,8 +7,8 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Tested native p4a recipes (Do NOT add cython or onnxruntime here)
-requirements = python3,kivy==2.3.0,plyer,pillow,numpy,opencv
+# Pinning numpy==1.26.4 forces the stable C-based engine and blocks broken NumPy 2.0
+requirements = python3,kivy==2.3.0,plyer,pillow,numpy==1.26.4
 
 orientation = portrait
 
