@@ -50,7 +50,8 @@ jobs:
 
     - name: Build APK with Buildozer
       run: |
-        buildozer -v android debug
+        # Pipe 'yes' to auto-accept Android SDK / NDK license agreements
+        yes | buildozer -v android debug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4

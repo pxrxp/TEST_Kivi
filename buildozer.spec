@@ -17,6 +17,7 @@ permissions = CAMERA
 
 android.api = 33
 android.minapi = 24
+android.build_tools_version = 33.0.2
 android.ndk = 25b
 android.ndk_api = 24
 android.private_storage = True
