@@ -7,8 +7,8 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Added the 'v' prefix so git can check out tag 'v1.26.4'
-requirements = python3,kivy==2.3.0,plyer,pillow,numpy==v1.26.4
+# Pure recipe requirements (All 5 have official, tested p4a recipes)
+requirements = python3,kivy==2.3.0,plyer,pillow,numpy
 
 orientation = portrait
 
