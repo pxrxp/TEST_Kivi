@@ -9,7 +9,7 @@ package.domain = org.test
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,onnx
 
-requirements = kivy==2.3.0,opencv==4.5.2,numpy==1.26.4,plyer,onnxruntime
+requirements = kivy==2.3.0,plyer,onnxruntime
 
 orientation = portrait
 
@@ -34,3 +34,4 @@ log_level = 2
 warn_on_root = 1
 build_dir = .buildozer
 bin_dir = bin
+

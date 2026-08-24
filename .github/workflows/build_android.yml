@@ -19,14 +19,20 @@ jobs:
       with:
         image: kivy/buildozer:latest
         python_version: 3.12
-        # run as root so venv and installs succeed; chown back after build
         options: -v ${{ github.workspace }}:/home/user/app -w /home/user/app
         run: |
           set -eux
           python -m venv .venv
           . .venv/bin/activate
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel cython
           pip install buildozer python-Levenshtein
+          
+          # Pre-install dependencies via pip to avoid git checkout issues
+          # Use compatible versions that work with buildozer's toolchain
+          pip install --no-binary :all: numpy==1.24.3
+          pip install opencv-python==4.8.1.78
+          pip install plyer onnxruntime
+          
           # pipe "yes" so buildozer won't block on root confirmation
           yes | BUILDOZER_ALLOW_ROOT=1 buildozer --allow-root -v android debug
           # make files readable by runner user
@@ -38,3 +44,4 @@ jobs:
         name: skyline-geolocation-apk
         path: bin/*.apk
         if-no-files-found: ignore
+
