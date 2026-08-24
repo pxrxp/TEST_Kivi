@@ -1,18 +1,25 @@
-name: Build Skyline Geolocation APK
+name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout repository
+    - name: Checkout Repository
       uses: actions/checkout@v4
+
+    - name: Set up Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
@@ -41,19 +48,24 @@ jobs:
           autoconf \
           libtool \
           pkg-config \
-          cmake
+          cmake \
+          ninja-build \
+          gfortran \
+          libblas-dev \
+          liblapack-dev \
+          ccache
 
-    - name: Install Buildozer and Host Cython
+    - name: Install Pinned Build Tools (Cython 0.29.36 & Buildozer 1.5.0)
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install "cython<3.0.0" buildozer
+        pip install "cython==0.29.36" "buildozer==1.5.0"
 
     - name: Build APK with Buildozer
       run: |
-        # Pipe 'yes' to auto-accept Android SDK / NDK license agreements
+        # Auto-accept all Android SDK/NDK licenses
         yes | buildozer -v android debug
 
-    - name: Upload APK
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: skyline-geolocation-apk

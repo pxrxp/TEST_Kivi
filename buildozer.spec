@@ -2,30 +2,27 @@
 
 title = Skyline Geolocation
 package.name = skylinegeolocation
-package.domain = org.test
+package.domain = org.skyline
 
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,onnx
+source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# 1. Changed kivy>=2.4.0 to kivy==2.3.0
-# 2. Removed cython from requirements (it is handled on the host side)
-requirements = python3,kivy==2.3.0,plyer,opencv
+# Tested native p4a recipes (Do NOT add cython or onnxruntime here)
+requirements = python3,kivy==2.3.0,plyer,pillow,numpy,opencv
 
 orientation = portrait
 
-permissions = CAMERA
+permissions = CAMERA, INTERNET, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
 
 android.api = 33
 android.minapi = 24
-android.build_tools_version = 33.0.2
 android.ndk = 25b
-android.ndk_api = 24
-android.private_storage = True
+android.build_tools_version = 33.0.2
+
 android.accept_ndk_license = True
 android.enable_androidx = True
 android.archs = arm64-v8a
-android.copy_libs = 1
-android.gradle_options = org.gradle.jvmargs=-Xmx4096m
+android.private_storage = True
 
 version = 0.1
 
