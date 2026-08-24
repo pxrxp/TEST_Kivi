@@ -7,8 +7,8 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Force pip to select NumPy 1.x (1.26.4) and bypass broken NumPy 2.x Ninja builds
-requirements = python3,kivy==2.3.0,plyer,pillow,numpy<2.0.0
+# Pin target Python to 3.11.9 and numpy to 1.26.4 for guaranteed Android stability
+requirements = python3==3.11.9,kivy==2.3.0,plyer,pillow,numpy==1.26.4
 
 orientation = portrait
 
