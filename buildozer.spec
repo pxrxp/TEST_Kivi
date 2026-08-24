@@ -7,8 +7,8 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Stable requirements using p4a's official Python 3.11 toolchain
-requirements = python3,kivy==2.3.0,plyer,pillow,numpy
+# Requirements using stable NumPy 1.x
+requirements = python3,kivy==2.3.0,plyer,pillow,numpy==1.26.4
 
 orientation = portrait
 
@@ -23,6 +23,9 @@ android.accept_ndk_license = True
 android.enable_androidx = True
 android.archs = arm64-v8a
 android.private_storage = True
+
+# Disable pip build isolation so Ninja/Meson is NEVER invoked
+p4a.extra_args = --no-build-isolation
 
 version = 0.1
 

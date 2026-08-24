@@ -49,7 +49,6 @@ jobs:
           libtool \
           pkg-config \
           cmake \
-          ninja-build \
           gfortran \
           libblas-dev \
           liblapack-dev \
