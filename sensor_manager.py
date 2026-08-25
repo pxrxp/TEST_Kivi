@@ -2,7 +2,6 @@
 GPS-Free Sensor Manager Module
 
 Wraps plyer sensor interfaces with fallback mock sensors for desktop testing.
-Uses accelerometer for pitch/roll computation and magnetometer compass for azimuth heading.
 """
 
 import math
@@ -10,15 +9,9 @@ import time
 from typing import Dict, Any
 
 import numpy as np
-def build_tilt_matrix(pitch_deg: float, roll_deg: float):
-    """
-    Build the 3x3 camera tilt rotation matrix from phone pitch/roll so that
-    extracted elevation angles are corrected into the world frame (same role
-    as GSV `cam_R_tilt` in the production pipeline).
 
-    Convention (camera frame: x right, y up, -z forward):
-        R = Ry(roll) @ Rx(pitch)
-    """
+
+def build_tilt_matrix(pitch_deg: float, roll_deg: float):
     p = math.radians(pitch_deg)
     r = math.radians(roll_deg)
     cp, sp = math.cos(p), math.sin(p)
@@ -29,8 +22,6 @@ def build_tilt_matrix(pitch_deg: float, roll_deg: float):
 
 
 class MockAccelerometer:
-    """Mock accelerometer for desktop testing."""
-
     def enable(self):
         pass
 
@@ -39,8 +30,6 @@ class MockAccelerometer:
 
 
 class MockCompass:
-    """Mock compass for desktop testing."""
-
     def enable(self):
         pass
 
@@ -50,22 +39,15 @@ class MockCompass:
 
 try:
     from plyer import accelerometer, compass
-    # Test if platform module actually exists
-    _ = compass.heading
     PLYER_AVAILABLE = True
-except (ImportError, ModuleNotFoundError, NotImplementedError, AttributeError, Exception):
+except Exception:
     PLYER_AVAILABLE = False
     accelerometer = MockAccelerometer()
     compass = MockCompass()
 
 
 class SensorManager:
-    """
-    GPS-Free sensor manager using accelerometer for pitch/roll
-    and magnetometer for heading.
-    """
-
-    DEFAULT_TOLERANCE = 2.0  # degrees
+    DEFAULT_TOLERANCE = 2.0
     DEFAULT_FOV_Y = 65.0
 
     def __init__(self, fov_y_deg: float = DEFAULT_FOV_Y):
@@ -79,7 +61,6 @@ class SensorManager:
         self._last_update: float = 0.0
 
     def start(self) -> bool:
-        """Start sensor services. Returns True if hardware sensors enabled."""
         if not self._sensor_available:
             return False
 
@@ -95,10 +76,9 @@ class SensorManager:
         except Exception:
             self._compass_enabled = False
 
-        return self._accelerometer_enabled and self._compass_enabled
+        return self._accelerometer_enabled or self._compass_enabled
 
     def stop(self):
-        """Stop sensor services."""
         if not self._sensor_available:
             return
 
@@ -117,16 +97,15 @@ class SensorManager:
             pass
 
     def update_sensors(self):
-        """Poll latest sensor readings."""
         if not self._sensor_available:
             return
 
         if self._accelerometer_enabled:
             try:
-                ax = accelerometer.acceleration[0] or 0.0
-                ay = accelerometer.acceleration[1] or 0.0
-                az = accelerometer.acceleration[2] or 0.0
-                self._pitch_deg, self._roll_deg = self._compute_pitch_roll(ax, ay, az)
+                acc = accelerometer.acceleration
+                if acc and len(acc) >= 3 and None not in acc[:3]:
+                    ax, ay, az = acc[0], acc[1], acc[2]
+                    self._pitch_deg, self._roll_deg = self._compute_pitch_roll(ax, ay, az)
             except Exception:
                 pass
 
@@ -141,12 +120,6 @@ class SensorManager:
         self._last_update = time.time()
 
     def _compute_pitch_roll(self, ax: float, ay: float, az: float) -> tuple:
-        """
-        Compute pitch and roll from accelerometer readings.
-
-        pitch = arctan2(ay, sqrt(ax^2 + az^2)) * 180/pi
-        roll  = arctan2(-ax, az) * 180/pi
-        """
         if az == 0 and ax == 0 and ay == 0:
             return 0.0, 0.0
 
@@ -160,25 +133,19 @@ class SensorManager:
         return pitch, roll
 
     def get_pitch(self) -> float:
-        """Return current pitch in degrees."""
         return self._pitch_deg
 
     def get_roll(self) -> float:
-        """Return current roll in degrees."""
         return self._roll_deg
 
     def get_heading(self) -> float:
-        """Return current heading in degrees (0-360)."""
         return self._heading_deg % 360.0
 
     def is_level(self, tolerance: float = DEFAULT_TOLERANCE) -> bool:
-        """Check if phone is level within tolerance (both pitch and roll)."""
         return abs(self._pitch_deg) <= tolerance and abs(self._roll_deg) <= tolerance
 
     def get_level_status(self) -> str:
-        """Get human-readable leveling instructions."""
         threshold = 2.0
-
         if abs(self._pitch_deg) <= threshold and abs(self._roll_deg) <= threshold:
             return "LEVEL PHONE"
         elif self._pitch_deg > threshold:
@@ -189,16 +156,14 @@ class SensorManager:
             return "LEVEL PHONE"
 
     def get_horizon_color(self) -> tuple:
-        """Return (r, g, b) color (0-255 int) for horizon line based on level status."""
         if self.is_level():
-            return (0, 255, 0)  # Green
+            return (0, 255, 0)
         elif abs(self._pitch_deg) <= 5.0:
-            return (255, 255, 0)  # Yellow
+            return (255, 255, 0)
         else:
-            return (255, 0, 0)  # Red
+            return (255, 0, 0)
 
     def get_sensor_data(self) -> Dict[str, Any]:
-        """Capture structured sensor reading for this snapshot."""
         return {
             "pitch_deg": round(self._pitch_deg, 4),
             "roll_deg": round(self._roll_deg, 4),
@@ -209,15 +174,12 @@ class SensorManager:
         }
 
     def is_hardware_available(self) -> bool:
-        """Check if hardware sensors are available."""
         return self._sensor_available
 
     def is_mocking(self) -> bool:
-        """Returns True if using mock sensors (desktop testing)."""
         return not self._sensor_available
 
     def set_mock_values(self, pitch_deg: float, roll_deg: float, heading_deg: float):
-        """Set mock sensor values for testing."""
         self._pitch_deg = pitch_deg
         self._roll_deg = roll_deg
         self._heading_deg = heading_deg

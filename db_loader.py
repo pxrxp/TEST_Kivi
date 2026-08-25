@@ -2,13 +2,7 @@
 On-Device Skyline Database Loader
 
 Loads pre-rendered horizon database (.npz format, converted from parquet
-via build_db.py). Pure numpy — no pyarrow, no pandas.
-
-NPZ format:
-  lats: float32 (N,)
-  lons: float32 (N,)
-  elevations: float32 (N,)
-  horizon: uint8 (N, 720)  — uint8-encoded elevation angles (0..255 → 0..90°)
+via build_db.py).
 """
 
 import os
@@ -24,26 +18,12 @@ class SkylineDB:
         self.lats: Optional[np.ndarray] = None
         self.lons: Optional[np.ndarray] = None
         self.elevations: Optional[np.ndarray] = None
-        self.horizon_matrix: Optional[np.ndarray] = None  # (N, 720) float32 decoded
+        self.horizon_matrix: Optional[np.ndarray] = None
         self.n_rows: int = 0
         self.n_bins: int = 720
         self.loaded: bool = False
 
     def load(self, npz_path: str, max_rows: Optional[int] = None) -> bool:
-        """
-        Load .npz skyline DB into memory.
-
-        Parameters
-        ----------
-        npz_path : str
-            Path to .npz file
-        max_rows : int, optional
-            Limit to first N rows (saves RAM)
-
-        Returns
-        -------
-        bool : True if loaded successfully
-        """
         if not os.path.exists(npz_path):
             print(f"[DB] File not found: {npz_path}")
             return False
@@ -61,8 +41,7 @@ class SkylineDB:
             self.lons = data["lons"][:n].astype(np.float32)
             self.elevations = data["elevations"][:n].astype(np.float32)
 
-            # horizon is uint8 in file — decode to float32 degrees
-            horizon_u8 = data["horizon"][:n]  # (N, 720) uint8
+            horizon_u8 = data["horizon"][:n]
             self.horizon_matrix = horizon_u8.astype(np.float32) * DEG_PER_BIN
 
             self.n_rows = n
@@ -92,20 +71,23 @@ class SkylineDB:
         }
 
     def find_db_path(self) -> Optional[str]:
-        """Search common locations for a bundled skyline DB."""
+        """Search common locations for bundled skyline DB."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         candidates = [
+            os.path.join(base_dir, "skyline_db.npz"),
+            os.path.join(base_dir, "data", "skyline_db.npz"),
             "skyline_db.npz",
             "data/skyline_db.npz",
             os.path.join(os.path.expanduser("~"), ".skylinegeolocation", "skyline_db.npz"),
         ]
 
-        # Android-specific paths
         try:
             from kivy.utils import platform as kivy_platform
             if kivy_platform == "android":
                 from jnius import autoclass
                 context = autoclass("org.kivy.android.PythonActivity").mActivity
                 files_dir = context.getFilesDir().getAbsolutePath()
+                candidates.insert(0, os.path.join(files_dir, "app", "skyline_db.npz"))
                 candidates.insert(0, os.path.join(files_dir, "skyline_db.npz"))
                 ext = context.getExternalFilesDir(None)
                 if ext:
@@ -129,7 +111,6 @@ def haversine_distance_km(lat1, lon1, lat2, lon2):
 
 
 def find_nearest_known_place(lat, lon, max_dist_km=50.0):
-    """Find nearest well-known city. Returns (name, distance_km, country)."""
     PLACES = [
         ("Kathmandu", 27.7172, 85.3240, "Nepal"),
         ("Pokhara", 28.2096, 83.9856, "Nepal"),
