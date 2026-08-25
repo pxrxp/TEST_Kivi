@@ -1,8 +1,8 @@
 """
 GPS-Free Sensor Manager Module
 
-Wraps plyer sensor interfaces with fallback mock sensors for desktop testing.
-Uses accelerometer for pitch/roll computation with low-pass filtering.
+Handles accelerometer & compass sensors with Landscape mode axis mapping
+and low-pass noise filtering.
 """
 
 import math
@@ -13,10 +13,6 @@ import numpy as np
 
 
 def build_tilt_matrix(pitch_deg: float, roll_deg: float):
-    """
-    Build 3x3 camera tilt rotation matrix from phone pitch/roll.
-    Camera frame convention: x right, y up, -z forward.
-    """
     p = math.radians(pitch_deg)
     r = math.radians(roll_deg)
     cp, sp = math.cos(p), math.sin(p)
@@ -53,26 +49,23 @@ except Exception:
 
 class SensorManager:
     """
-    GPS-Free sensor manager using accelerometer for smoothed pitch/roll
-    and compass for azimuth heading.
+    GPS-Free sensor manager specifically mapped for Landscape holding mode.
     """
 
-    DEFAULT_TOLERANCE = 3.0  # Practical tolerance in degrees for mobile handheld capture
-    DEFAULT_FOV_Y = 65.0
+    DEFAULT_TOLERANCE = 3.5  # Handheld level tolerance in degrees
 
-    def __init__(self, fov_y_deg: float = DEFAULT_FOV_Y):
+    def __init__(self, fov_y_deg: float = 65.0):
         self.fov_y_deg = fov_y_deg
         self._sensor_available = PLYER_AVAILABLE
         self._accelerometer_enabled = False
         self._compass_enabled = False
-        
+
         self._pitch_deg: float = 0.0
         self._roll_deg: float = 0.0
         self._heading_deg: float = 0.0
-        self._last_update: float = 0.0
-
-        # EMA smoothing factor (0.25 removes handheld noise without lag)
-        self._alpha = 0.25
+        
+        # Low-pass filter smoothing factor (reduces accelerometer noise)
+        self._alpha = 0.20
 
     def start(self) -> bool:
         if not self._sensor_available:
@@ -111,7 +104,7 @@ class SensorManager:
             pass
 
     def update_sensors(self):
-        """Poll latest sensor readings and apply low-pass EMA filter."""
+        """Poll latest sensor readings and filter landscape orientation."""
         if not self._sensor_available:
             return
 
@@ -120,9 +113,9 @@ class SensorManager:
                 acc = accelerometer.acceleration
                 if acc and len(acc) >= 3 and None not in acc[:3]:
                     ax, ay, az = acc[0], acc[1], acc[2]
-                    raw_pitch, raw_roll = self._compute_pitch_roll(ax, ay, az)
-                    
-                    # Apply Exponential Moving Average filter to smooth jitter
+                    raw_pitch, raw_roll = self._compute_landscape_pitch_roll(ax, ay, az)
+
+                    # Exponential Moving Average low-pass filter
                     self._pitch_deg = self._alpha * raw_pitch + (1.0 - self._alpha) * self._pitch_deg
                     self._roll_deg = self._alpha * raw_roll + (1.0 - self._alpha) * self._roll_deg
             except Exception:
@@ -132,18 +125,19 @@ class SensorManager:
             try:
                 heading = compass.heading
                 if heading is not None:
-                    # Filter heading angles properly across 0/360 boundary
                     h_raw = float(heading) % 360.0
                     dh = (h_raw - self._heading_deg + 180) % 360 - 180
-                    self._heading_deg = (self._heading_deg + self._alpha * dh) % 360.0
+                    self._heading_deg = (self._heading_deg + 0.2 * dh) % 360.0
             except Exception:
                 pass
 
-        self._last_update = time.time()
-
-    def _compute_pitch_roll(self, ax: float, ay: float, az: float) -> tuple:
+    def _compute_landscape_pitch_roll(self, ax: float, ay: float, az: float) -> tuple:
         """
-        Compute pitch and roll in landscape/portrait hold modes.
+        Exact Landscape Accelerometer Mapping:
+        
+        AX: Short edge vertical axis when held sideways in landscape.
+        AY: Long edge horizontal axis when held sideways in landscape.
+        AZ: Normal axis pointing out of screen towards user.
         """
         norm = math.sqrt(ax * ax + ay * ay + az * az)
         if norm < 1e-4:
@@ -151,10 +145,11 @@ class SensorManager:
 
         ax_n, ay_n, az_n = ax / norm, ay / norm, az / norm
 
-        # Pitch (tilting phone up/down)
-        pitch = math.degrees(math.atan2(ay_n, math.sqrt(ax_n * ax_n + az_n * az_n)))
-        # Roll (rotating screen left/right)
-        roll = math.degrees(math.atan2(-ax_n, az_n)) if abs(az_n) > 1e-4 else 0.0
+        # Pitch = tilt forward/backward (dependent ONLY on AZ screen normal & AX vertical)
+        pitch = math.degrees(math.atan2(-az_n, ax_n if abs(ax_n) > 1e-3 else 1e-3))
+
+        # Roll = tilt side-to-side (dependent ONLY on AY horizontal & AX vertical)
+        roll = math.degrees(math.atan2(ay_n, ax_n if abs(ax_n) > 1e-3 else 1e-3))
 
         return pitch, roll
 
@@ -171,40 +166,39 @@ class SensorManager:
         return abs(self._pitch_deg) <= tolerance and abs(self._roll_deg) <= tolerance
 
     def get_level_guidance(self) -> str:
-        """Get directional text guidance with arrows for easy leveling."""
+        """Clear, intuitive direction prompts for the user."""
         p_ok = abs(self._pitch_deg) <= self.DEFAULT_TOLERANCE
         r_ok = abs(self._roll_deg) <= self.DEFAULT_TOLERANCE
 
         if p_ok and r_ok:
-            return "✓ HOLD STEADY — LEVEL"
+            return "✓ LEVEL - HOLD STEADY"
 
-        actions = []
+        prompts = []
         if self._pitch_deg > self.DEFAULT_TOLERANCE:
-            actions.append("▼ TILT DOWN")
+            prompts.append("TILT DOWN ↓")
         elif self._pitch_deg < -self.DEFAULT_TOLERANCE:
-            actions.append("▲ TILT UP")
+            prompts.append("TILT UP ↑")
 
         if self._roll_deg > self.DEFAULT_TOLERANCE:
-            actions.append("↻ ROTATE RIGHT")
+            prompts.append("ROTATE RIGHT ↻")
         elif self._roll_deg < -self.DEFAULT_TOLERANCE:
-            actions.append("↺ ROTATE LEFT")
+            prompts.append("ROTATE LEFT ↺")
 
-        return " | ".join(actions)
+        return " | ".join(prompts)
 
     def get_horizon_color(self) -> tuple:
-        """Return (r, g, b) 0-255 color for HUD elements."""
         if self.is_level():
-            return (0, 255, 102)     # Bright Emerald Green
-        elif abs(self._pitch_deg) <= 6.0 and abs(self._roll_deg) <= 6.0:
-            return (255, 204, 0)     # Warning Amber
+            return (0, 255, 102)    # Emerald Green
+        elif abs(self._pitch_deg) <= 7.0 and abs(self._roll_deg) <= 7.0:
+            return (255, 204, 0)    # Amber
         else:
-            return (255, 51, 51)      # Alert Red
+            return (255, 51, 51)     # Red
 
     def get_sensor_data(self) -> Dict[str, Any]:
         return {
-            "pitch_deg": round(self._pitch_deg, 2),
-            "roll_deg": round(self._roll_deg, 2),
-            "heading_deg": round(self._heading_deg % 360.0, 1),
+            "pitch_deg": round(self._pitch_deg, 1),
+            "roll_deg": round(self._roll_deg, 1),
+            "heading_deg": round(self._heading_deg % 360.0, 0),
             "fov_y_deg": self.fov_y_deg,
             "is_level": self.is_level(),
             "guidance": self.get_level_guidance(),
@@ -214,9 +208,6 @@ class SensorManager:
 
     def is_hardware_available(self) -> bool:
         return self._sensor_available
-
-    def is_mocking(self) -> bool:
-        return not self._sensor_available
 
     def set_mock_values(self, pitch_deg: float, roll_deg: float, heading_deg: float):
         self._pitch_deg = pitch_deg

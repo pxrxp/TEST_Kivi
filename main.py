@@ -1,7 +1,7 @@
 """
 Main Application Module
 
-GPS-Free Skyline Geolocation App with Landscape HUD and Multi-Crop Fusion.
+GPS-Free Skyline Geolocation App with Landscape HUD and Multi-Crop Perspective Fusion.
 """
 
 import json
@@ -13,7 +13,7 @@ import numpy as np
 
 # Local modules
 from sensor_manager import SensorManager, build_tilt_matrix
-from camera_overlay import CameraOverlay, LevelBanner
+from camera_overlay import CameraOverlay
 from segmentation_engine import SegmentationEngine
 from profile_extractor import ProfileExtractor, fuse_profiles_world_frame
 from matching import match_query
@@ -31,8 +31,29 @@ from kivy.utils import platform
 from kivy.core.window import Window
 
 
-# Lock window orientation to Landscape
-Window.softinput_mode = "below_target"
+# Desktop window size default (16:9 Landscape)
+Window.size = (1280, 720)
+
+
+def enforce_android_landscape():
+    """Enforce landscape orientation on Android UI thread."""
+    if platform == "android":
+        try:
+            from jnius import autoclass
+            from android.runnable import run_on_ui_thread
+
+            @run_on_ui_thread
+            def _set_orient():
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                ActivityInfo = autoclass("android.content.pm.ActivityInfo")
+                activity = PythonActivity.mActivity
+                # 6 = SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                activity.setRequestedOrientation(6)
+
+            _set_orient()
+            print("[ORIENTATION] Enforced Landscape Orientation on Android UI thread")
+        except Exception as e:
+            print(f"[ORIENTATION] Landscape set failed: {e}")
 
 
 class MultiCropManager:
@@ -41,7 +62,6 @@ class MultiCropManager:
     def __init__(self, max_crops: int = 3):
         self.max_crops = max_crops
         self.crops = []
-        self.target_headings = [0, 90, 180]
         self.crop_labels = ["FRONT (0°)", "RIGHT (+90°)", "REAR (+180°)"]
 
     def add_crop(self, image: Any, sensor_data: Dict, heading: float) -> bool:
@@ -86,6 +106,7 @@ class SkylineGeolocationApp(App):
         self.crop_manager = MultiCropManager(max_crops=3)
 
         self.camera = None
+        self.camera_container = None
         self.capture_enabled = False
         self.output_dir = "./captures"
 
@@ -97,44 +118,65 @@ class SkylineGeolocationApp(App):
             print("[APP] No skyline DB found — matching disabled")
 
     def build(self):
-        """Build widescreen landscape layout."""
+        """Build main landscape UI layout."""
+        enforce_android_landscape()
         self.sensor_manager.start()
+
         self.layout = FloatLayout()
 
-        # 1. Full-Screen Camera Feed
-        self.init_camera()
+        # Camera Container (Layer 0)
+        self.camera_container = FloatLayout(size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
+        self.layout.add_widget(self.camera_container)
 
-        # 2. Transparent Landscape HUD Overlay
+        # Initial Status Text
+        self.cam_status_label = Label(
+            text="Initializing Camera...",
+            color=(0.8, 0.8, 0.8, 1.0),
+            font_size="16sp",
+            pos_hint={"center_x": 0.5, "center_y": 0.5},
+        )
+        self.camera_container.add_widget(self.cam_status_label)
+
+        # Transparent HUD Overlay (Layer 1)
         self.overlay = CameraOverlay(
-            self.camera,
             screen_width=int(Window.width),
             screen_height=int(Window.height),
             fov_y_deg=65.0,
         )
         self.layout.add_widget(self.overlay)
 
-        # 3. Status Level Banner
-        self.banner = LevelBanner()
-        self.layout.add_widget(self.banner)
-
-        # 4. Heading & Step Info Pill (Bottom Left)
+        # Info Badge (Bottom Left)
         self.info_label = Label(
             text="HDG: 0° | CROP 1 OF 3",
             color=(1.0, 1.0, 1.0, 0.9),
-            font_size="15sp",
+            font_size="14sp",
             bold=True,
             size_hint=(None, None),
-            size=(220, 36),
+            size=(240, 36),
             pos_hint={"x": 0.02, "y": 0.04},
         )
         self.layout.add_widget(self.info_label)
 
-        # 5. Capture Button (Bottom Center)
+        # Permission / Retry Button (Fallback if permission required)
+        self.perm_btn = Button(
+            text="🔑 GRANT CAMERA PERMISSION",
+            font_size="14sp",
+            bold=True,
+            size_hint=(0.35, 0.10),
+            pos_hint={"center_x": 0.5, "center_y": 0.5},
+            background_color=(0.1, 0.6, 1.0, 1.0),
+            opacity=0,
+            disabled=True,
+        )
+        self.perm_btn.bind(on_press=lambda inst: self.request_android_permissions())
+        self.layout.add_widget(self.perm_btn)
+
+        # Capture Button (Bottom Center)
         self.capture_btn = Button(
             text="📸 CAPTURE CROP 1",
             font_size="16sp",
             bold=True,
-            size_hint=(0.4, 0.11),
+            size_hint=(0.42, 0.12),
             pos_hint={"center_x": 0.5, "y": 0.04},
             background_color=(0.0, 0.8, 0.4, 1.0),
             disabled=True,
@@ -142,49 +184,28 @@ class SkylineGeolocationApp(App):
         self.capture_btn.bind(on_press=self.on_capture)
         self.layout.add_widget(self.capture_btn)
 
-        # Start loops
+        # Start Sensor Updates
         self.overlay.start_update_loop(interval=0.08)
         self.sensor_update_event = Clock.schedule_interval(self.update_sensors, 0.08)
 
+        # Schedule permission request
+        Clock.schedule_once(lambda dt: self.request_android_permissions(), 0.2)
+
         return self.layout
 
-    def init_camera(self):
-        """Safely initialize camera with full-screen landscape stretch."""
-        if self.camera is not None:
-            return
-        try:
-            cam = Camera(
-                play=True,
-                resolution=(1920, 1080),
-                allow_stretch=True,
-                keep_ratio=False,
-                size_hint=(1, 1),
-                pos_hint={"x": 0, "y": 0},
-            )
-            self.camera = cam
-            if hasattr(self, "overlay") and self.overlay:
-                self.overlay.camera = cam
-            if hasattr(self, "layout") and self.layout:
-                self.layout.add_widget(cam, index=len(self.layout.children))
-            print("[CAMERA] Camera feed started successfully")
-        except Exception as e:
-            print(f"[CAMERA] Camera init postponed: {e}")
-            self.camera = None
-
-    def on_start(self):
-        """Request permissions on Android at startup."""
-        self.request_android_permissions()
-
     def request_android_permissions(self):
+        """Request Android permissions explicitly."""
         if platform == "android":
             try:
                 from android.permissions import request_permissions, Permission
                 def callback(permissions, results):
                     if all(results):
                         print("[PERMISSIONS] Permissions granted")
+                        self.hide_perm_button()
                         Clock.schedule_once(lambda dt: self.init_camera())
                     else:
                         print("[PERMISSIONS] Permissions denied")
+                        self.show_perm_button()
                 request_permissions([
                     Permission.CAMERA,
                     Permission.READ_EXTERNAL_STORAGE,
@@ -192,6 +213,42 @@ class SkylineGeolocationApp(App):
                 ], callback)
             except Exception as e:
                 print(f"[PERMISSIONS] Permission request error: {e}")
+                self.init_camera()
+        else:
+            self.init_camera()
+
+    def show_perm_button(self):
+        self.cam_status_label.text = "Camera Permission Required."
+        self.perm_btn.opacity = 1
+        self.perm_btn.disabled = False
+
+    def hide_perm_button(self):
+        self.perm_btn.opacity = 0
+        self.perm_btn.disabled = True
+
+    def init_camera(self):
+        """Instantiate and attach live camera feed."""
+        if self.camera is not None:
+            return
+
+        try:
+            cam = Camera(
+                play=True,
+                resolution=(1280, 720),
+                allow_stretch=True,
+                keep_ratio=False,
+                size_hint=(1, 1),
+                pos_hint={"x": 0, "y": 0},
+            )
+            self.camera = cam
+            self.overlay.camera = cam
+
+            self.camera_container.clear_widgets()
+            self.camera_container.add_widget(cam)
+            print("[CAMERA] Camera hardware attached successfully")
+        except Exception as e:
+            print(f"[CAMERA] Camera init error: {e}")
+            self.cam_status_label.text = f"Camera Hardware Unavailable ({e})"
 
     def update_sensors(self, dt):
         """Update sensor readings and refresh UI controls."""
@@ -203,7 +260,6 @@ class SkylineGeolocationApp(App):
         heading = sensor_data["heading_deg"]
         prompt = self.crop_manager.get_current_prompt()
 
-        self.banner.update_status(is_level, sensor_data["pitch_deg"], sensor_data["roll_deg"])
         self.info_label.text = f"HDG: {heading:.0f}° | {prompt}"
 
         self.capture_enabled = is_level
@@ -212,7 +268,7 @@ class SkylineGeolocationApp(App):
             self.capture_btn.background_color = (0.0, 0.8, 0.4, 1.0)
             self.capture_btn.text = f"📸 CAPTURE ({prompt.split(':')[0]})"
         else:
-            self.capture_btn.background_color = (0.4, 0.4, 0.4, 0.8)
+            self.capture_btn.background_color = (0.35, 0.35, 0.35, 0.8)
             self.capture_btn.text = "⏳ HOLD PHONE LEVEL"
 
     def on_capture(self, instance):
@@ -226,7 +282,7 @@ class SkylineGeolocationApp(App):
         captured_data = self.overlay.capture_photo()
 
         if captured_data is None:
-            self.show_popup("Error", "Camera texture unavailable")
+            self.show_popup("Error", "Camera frame unavailable")
             return
 
         os.makedirs(self.output_dir, exist_ok=True)
