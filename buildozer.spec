@@ -7,7 +7,6 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-# Use 'numpy<2.0.0' so Buildozer uses pip instead of git checkout
 requirements = python3,kivy==2.3.0,plyer,pillow,numpy<2.0.0
 
 orientation = portrait
@@ -24,7 +23,6 @@ android.enable_androidx = True
 android.archs = arm64-v8a
 android.private_storage = True
 
-# Disable pip build isolation so Ninja/Meson is NEVER invoked
 p4a.extra_args = --no-build-isolation
 
 version = 0.1
