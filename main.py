@@ -1,7 +1,7 @@
 """
 Main Application Module
 
-GPS-Free Skyline Geolocation App with Landscape HUD and Multi-Crop Perspective Fusion.
+GPS-Free Skyline Geolocation App with Live Camera Feed and Landscape HUD.
 """
 
 import json
@@ -31,7 +31,7 @@ from kivy.utils import platform
 from kivy.core.window import Window
 
 
-# Desktop window size default (16:9 Landscape)
+# Lock desktop window size to 16:9 Landscape
 Window.size = (1280, 720)
 
 
@@ -51,7 +51,7 @@ def enforce_android_landscape():
                 activity.setRequestedOrientation(6)
 
             _set_orient()
-            print("[ORIENTATION] Enforced Landscape Orientation on Android UI thread")
+            print("[ORIENTATION] Enforced Landscape Orientation")
         except Exception as e:
             print(f"[ORIENTATION] Landscape set failed: {e}")
 
@@ -124,20 +124,20 @@ class SkylineGeolocationApp(App):
 
         self.layout = FloatLayout()
 
-        # Camera Container (Layer 0)
+        # Camera Container Layer (Layer 0 - Full Screen Behind Overlay)
         self.camera_container = FloatLayout(size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
         self.layout.add_widget(self.camera_container)
 
-        # Initial Status Text
+        # Status Label shown while camera loads
         self.cam_status_label = Label(
-            text="Initializing Camera...",
-            color=(0.8, 0.8, 0.8, 1.0),
+            text="Requesting Camera Access...",
+            color=(0.9, 0.9, 0.9, 1.0),
             font_size="16sp",
             pos_hint={"center_x": 0.5, "center_y": 0.5},
         )
         self.camera_container.add_widget(self.cam_status_label)
 
-        # Transparent HUD Overlay (Layer 1)
+        # Transparent HUD Overlay Layer (Layer 1)
         self.overlay = CameraOverlay(
             screen_width=int(Window.width),
             screen_height=int(Window.height),
@@ -145,7 +145,7 @@ class SkylineGeolocationApp(App):
         )
         self.layout.add_widget(self.overlay)
 
-        # Info Badge (Bottom Left)
+        # Heading & Step Info Badge (Bottom Left)
         self.info_label = Label(
             text="HDG: 0° | CROP 1 OF 3",
             color=(1.0, 1.0, 1.0, 0.9),
@@ -157,12 +157,12 @@ class SkylineGeolocationApp(App):
         )
         self.layout.add_widget(self.info_label)
 
-        # Permission / Retry Button (Fallback if permission required)
+        # Fallback Permission Prompt Button
         self.perm_btn = Button(
             text="🔑 GRANT CAMERA PERMISSION",
             font_size="14sp",
             bold=True,
-            size_hint=(0.35, 0.10),
+            size_hint=(0.4, 0.12),
             pos_hint={"center_x": 0.5, "center_y": 0.5},
             background_color=(0.1, 0.6, 1.0, 1.0),
             opacity=0,
@@ -184,50 +184,59 @@ class SkylineGeolocationApp(App):
         self.capture_btn.bind(on_press=self.on_capture)
         self.layout.add_widget(self.capture_btn)
 
-        # Start Sensor Updates
+        # Sensor update loop
         self.overlay.start_update_loop(interval=0.08)
         self.sensor_update_event = Clock.schedule_interval(self.update_sensors, 0.08)
 
-        # Schedule permission request
-        Clock.schedule_once(lambda dt: self.request_android_permissions(), 0.2)
+        # Schedule permission request on main Kivy thread
+        Clock.schedule_once(lambda dt: self.request_android_permissions(), 0.3)
 
         return self.layout
 
     def request_android_permissions(self):
-        """Request Android permissions explicitly."""
+        """Request Camera permission safely from main Kivy thread."""
         if platform == "android":
             try:
-                from android.permissions import request_permissions, Permission
-                def callback(permissions, results):
-                    if all(results):
-                        print("[PERMISSIONS] Permissions granted")
-                        self.hide_perm_button()
-                        Clock.schedule_once(lambda dt: self.init_camera())
-                    else:
-                        print("[PERMISSIONS] Permissions denied")
-                        self.show_perm_button()
-                request_permissions([
-                    Permission.CAMERA,
-                    Permission.READ_EXTERNAL_STORAGE,
-                    Permission.WRITE_EXTERNAL_STORAGE,
-                ], callback)
+                from android.permissions import request_permissions, Permission, check_permission
+
+                if check_permission(Permission.CAMERA):
+                    print("[PERMISSIONS] Camera permission already granted")
+                    Clock.schedule_once(lambda dt: self.init_camera(), 0)
+                    return
+
+                def _permission_callback(permissions, results):
+                    # Dispatch callback result to Kivy main thread to prevent thread crash
+                    def _on_main_thread(dt):
+                        if results and results[0]:
+                            print("[PERMISSIONS] Camera permission granted by user")
+                            self.hide_perm_button()
+                            self.init_camera()
+                        else:
+                            print("[PERMISSIONS] Camera permission denied by user")
+                            self.show_perm_button()
+
+                    Clock.schedule_once(_on_main_thread, 0)
+
+                request_permissions([Permission.CAMERA], _permission_callback)
             except Exception as e:
                 print(f"[PERMISSIONS] Permission request error: {e}")
-                self.init_camera()
+                Clock.schedule_once(lambda dt: self.init_camera(), 0)
         else:
-            self.init_camera()
+            Clock.schedule_once(lambda dt: self.init_camera(), 0)
 
     def show_perm_button(self):
+        """Show fallback permission button on main thread."""
         self.cam_status_label.text = "Camera Permission Required."
         self.perm_btn.opacity = 1
         self.perm_btn.disabled = False
 
     def hide_perm_button(self):
+        """Hide permission button on main thread."""
         self.perm_btn.opacity = 0
         self.perm_btn.disabled = True
 
     def init_camera(self):
-        """Instantiate and attach live camera feed."""
+        """Instantiate and attach live camera preview to screen."""
         if self.camera is not None:
             return
 
@@ -245,13 +254,13 @@ class SkylineGeolocationApp(App):
 
             self.camera_container.clear_widgets()
             self.camera_container.add_widget(cam)
-            print("[CAMERA] Camera hardware attached successfully")
+            print("[CAMERA] Live camera feed attached successfully")
         except Exception as e:
-            print(f"[CAMERA] Camera init error: {e}")
-            self.cam_status_label.text = f"Camera Hardware Unavailable ({e})"
+            print(f"[CAMERA] Camera init failed: {e}")
+            self.cam_status_label.text = f"Camera Hardware Error: {e}"
 
     def update_sensors(self, dt):
-        """Update sensor readings and refresh UI controls."""
+        """Update sensor readings and UI control states."""
         self.sensor_manager.update_sensors()
         sensor_data = self.sensor_manager.get_sensor_data()
         self.overlay.update_sensor_data(self.sensor_manager)
