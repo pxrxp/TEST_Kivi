@@ -20,6 +20,8 @@ from sensor_manager import SensorManager, build_tilt_matrix
 from camera_overlay import CameraOverlay, LevelBanner
 from segmentation_engine import SegmentationEngine
 from profile_extractor import ProfileExtractor, fuse_profiles_world_frame
+from matching import match_query
+from db_loader import SkylineDB, find_nearest_known_place
 
 # Kivy/KivyMD imports
 from kivy.app import App
@@ -95,6 +97,14 @@ class SkylineGeolocationApp(App):
         self.camera = None
         self.capture_enabled = False
         self.output_dir = "./captures"
+
+        # Skyline database for matching
+        self.skyline_db = SkylineDB()
+        db_path = self.skyline_db.find_db_path()
+        if db_path:
+            self.skyline_db.load(db_path)
+        else:
+            print("[APP] No skyline DB found — matching disabled")
 
     def build(self):
         """Build the main UI layout."""
@@ -207,6 +217,10 @@ class SkylineGeolocationApp(App):
         """Handle capture button press."""
         if not self.capture_enabled:
             return
+
+        # Track session start time
+        if not hasattr(self, "session_start") or self.session_start is None:
+            self.session_start = time.time()
 
         # Get sensor data at capture time
         sensor_data = self.sensor_manager.get_sensor_data()
@@ -415,19 +429,55 @@ class SkylineGeolocationApp(App):
                 if fusion["wide_fov_ok"]
                 else f"LOW COVERAGE ({fusion['coverage_deg']:.0f}° < 200°)"
             )
-            self.show_popup(
-                "Session Complete",
-                f"All {len(processed_crops)} crops captured!\n"
-                f"Fused coverage: {fusion['coverage_deg']:.1f}° ({coverage_msg})\n"
-                f"Payload saved to:\n{output_file}",
-            )
 
-            # Reset for next session
+            # --- Matching ---
+            match_result = None
+            if self.skyline_db.loaded and fusion["profile"] is not None:
+                fused = fusion["profile"]
+                valid_bins = np.isfinite(fused)
+                if valid_bins.sum() >= 30:
+                    query_for_match = np.where(valid_bins, fused, 0.0)
+                    match_result = match_query(
+                        self.skyline_db.horizon_matrix,
+                        self.skyline_db.lats,
+                        self.skyline_db.lons,
+                        query_for_match,
+                        bin_deg=self.profile_extractor.bin_deg,
+                        top_k=10,
+                        spatial_stride=2,
+                        min_corr=0.1,
+                    )
+
+            # Build result
+            lines = [
+                f"All {len(processed_crops)} crops captured!",
+                f"Fused coverage: {fusion['coverage_deg']:.1f}° ({coverage_msg})",
+            ]
+
+            if match_result and match_result["ok"]:
+                top = match_result["matches"][0]
+                place = find_nearest_known_place(top["lat"], top["lon"])
+                lines += [
+                    "",
+                    f"📍 LOCATION FOUND",
+                    f"  Lat: {top['lat']:.4f}°  Lon: {top['lon']:.4f}°",
+                    f"  Score: {top['score']:.3f}",
+                    f"  Near: {place[0]} ({place[2]}), ~{place[1]:.0f} km" if place else "",
+                ]
+            elif match_result:
+                lines += ["", f"⚠ {match_result['status']}: {match_result['reason']}"]
+            elif not self.skyline_db.loaded:
+                lines += ["", "⚠ No skyline DB for matching"]
+
+            lines += ["", f"Payload saved to:\n{output_file}"]
+            self.show_popup("Session Complete", "\n".join(lines))
+
+            # Reset
             self.crop_manager.reset()
+            self.session_start = None
 
         except Exception as e:
             self.show_popup("Export Error", str(e))
-
 
     def show_popup(self, title: str, message: str):
         """Show a popup dialog."""

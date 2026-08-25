@@ -203,7 +203,7 @@ def load_and_export(input_path: str, output_path: str):
     model.load_state_dict(state_dict, strict=False)
     model.eval()
 
-    # Export to ONNX
+    # Export to ONNX (fixed shapes, legacy tracer for OpenCV DNN compat)
     dummy_input = torch.randn(1, 3, 256, 256)
     torch.onnx.export(
         model,
@@ -211,12 +211,9 @@ def load_and_export(input_path: str, output_path: str):
         output_path,
         input_names=["input"],
         output_names=["output"],
-        dynamic_axes={
-            "input": {0: "batch", 2: "H", 3: "W"},
-            "output": {0: "batch", 2: "H", 3: "W"},
-        },
-        opset_version=13,
+        opset_version=11,
         do_constant_folding=True,
+        dynamo=False,  # Legacy tracer — produces opset-11 nodes OpenCV DNN can parse
     )
     print(f"ONNX export successful: {output_path}")
 

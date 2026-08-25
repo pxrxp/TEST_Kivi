@@ -55,132 +55,149 @@ class SegmentationEngine:
             print(f"[SEGMENTATION] ModelAdapter failed: {exc}; using mock")
             return MockSegmentationModel(self.model_path)
 
+    @staticmethod
+    def _median_filter_1d(values, kernel_size=7):
+        """1-D median filter matching production segmentation.py."""
+        values = np.asarray(values, dtype=np.float64)
+        if kernel_size <= 1 or len(values) == 0:
+            return values
+        pad = kernel_size // 2
+        padded = np.pad(values, (pad, pad), mode="edge")
+        from numpy.lib.stride_tricks import sliding_window_view
+        return np.median(sliding_window_view(padded, kernel_size, axis=0), axis=1)
+
     def refine_sky_mask(
         self, img_np: np.ndarray, raw_unet_mask: np.ndarray
     ) -> np.ndarray:
         """
-        Refine sky mask using top-connected-sky constraints and Canny edge guides.
+        Production-grade sky mask refinement ported from
+        SkylineGeolocation/src/segmentation.py refine_sky_mask_with_guidance.
 
-        Pipeline (per AGENTS.md spec):
-        1. Top-connected sky filtering (flood-fill style from row <= 15,
-           fallback to largest region for steep mountain fills)
-        2. Canny ridge barrier restricted to +/-10px around U-Net boundary
-        3. Two-pass physical slope cap |dr/dc| <= 2.0 px/col
-        4. 9-tap 1D median smoothing
+        Pipeline:
+        1. Top-connected sky filtering with smart fallback
+        2. CLAHE-enhanced sky-zone dehazing
+        3. Multi-scale Canny edge fusion
+        4. Per-column boundary extraction with Canny barrier (±20px)
+        5. Outlier rejection via 5-neighbour median (30px threshold)
+        6. Two-pass physical slope cap |dr/dc| <= 2.0 px/col
+        7. 9-tap median + Gaussian smoothing
 
-        Parameters:
-        -----------
-        img_np : np.ndarray
-            Input RGB image array (HxWx3)
-        raw_unet_mask : np.ndarray
-            Raw binary sky mask from U-Net (1=SKY, 0=TERRAIN)
+        Parameters
+        ----------
+        img_np : ndarray (H, W, 3) uint8 RGB
+        raw_unet_mask : ndarray (H, W) uint8 — 1=SKY, 0=TERRAIN (from U-Net)
 
-        Returns:
-        --------
-        np.ndarray
-            Refined uint8 mask where 0=SKY (black) and 255=TERRAIN (white)
+        Returns
+        -------
+        ndarray (H, W) uint8 — 0=SKY, 255=TERRAIN
         """
-        print("[SEGMENTATION] Starting mask refinement...")
+        H, W = raw_unet_mask.shape
+        if H == 0 or W == 0:
+            return np.zeros((H, W), dtype=np.uint8)
 
-        # 1. Isolate sky pixels (raw_unet_mask: 1=SKY, 0=TERRAIN)
-        height, width = raw_unet_mask.shape
         sky1 = (raw_unet_mask == 1).astype(np.uint8)
 
-        # 2. Top-connected sky region
+        # --- 1. Top-connected sky region with smart fallback ---
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
             sky1, connectivity=8
         )
-        top_sky = np.zeros((height, width), dtype=np.uint8)
-        top_limit = max(15, int(height * 0.15))
-
+        top_sky = np.zeros((H, W), dtype=np.uint8)
+        top_limit = max(15, int(H * 0.15))
         for i in range(1, num_labels):
-            if (
-                stats[i, cv2.CC_STAT_TOP] <= top_limit
-                and stats[i, cv2.CC_STAT_AREA] > 50
-            ):
+            if stats[i, cv2.CC_STAT_TOP] <= top_limit and stats[i, cv2.CC_STAT_AREA] > 50:
                 top_sky[labels == i] = 1
-
-        # Fallback to largest region if no top-connected sky
         if top_sky.sum() == 0 and num_labels > 1:
             largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
             top_sky[labels == largest_idx] = 1
-
-        # Last resort: use raw mask
         if top_sky.sum() == 0:
             top_sky = sky1
 
-        # 3. Canny edge guidance
+        # --- 2. CLAHE-enhanced sky-zone dehazing ---
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(16, 16))
+        gray_enhanced = clahe.apply(gray)
+        sky_mask_zone = cv2.dilate(top_sky, np.ones((15, 15), np.uint8)) > 0
+        gray = np.where(sky_mask_zone, gray_enhanced, gray)
+
+        # --- 3. Multi-scale Canny edge fusion ---
         fine_blur = cv2.GaussianBlur(gray, (3, 3), 0)
         coarse_blur = cv2.GaussianBlur(gray, (7, 7), 0)
-        canny_edges = (cv2.Canny(fine_blur, 30, 150) > 0) | (
-            cv2.Canny(coarse_blur, 20, 100) > 0
-        )
+        edges_fine = cv2.Canny(fine_blur, 30, 150)
+        edges_coarse = cv2.Canny(coarse_blur, 20, 100)
+        canny_edges = (edges_fine > 0) | (edges_coarse > 0)
 
-        # 4. Build boundary array (last sky row per column of contiguous segment)
-        boundaries = np.full(width, -1, dtype=np.float64)
-
-        for col in range(width):
+        # --- 4. Per-column top-down boundary extraction ---
+        boundaries = np.full(W, -1, dtype=np.float64)
+        for col in range(W):
             sky_rows = np.where(top_sky[:, col] == 1)[0]
             if len(sky_rows) == 0:
                 continue
-
-            # Find largest contiguous sky segment; take its last row
             diffs = np.diff(sky_rows)
             gaps = np.where(diffs > 3)[0]
             max_sky_row = sky_rows[gaps[0]] if len(gaps) > 0 else sky_rows[-1]
 
-            # Restrict Canny search to ±10px window
-            if canny_edges is not None:
-                edge_rows = np.where(canny_edges[:, col])[0]
-                valid_mountain_edges = [
-                    r for r in edge_rows if abs(r - max_sky_row) <= 10
-                ]
-                if len(valid_mountain_edges) > 0:
-                    max_sky_row = valid_mountain_edges[0]
+            # Canny barrier: ±20px around U-Net boundary (ignores high clouds)
+            edge_rows = np.where(canny_edges[:, col])[0]
+            valid_mountain_edges = [r for r in edge_rows if abs(r - max_sky_row) <= 20]
+            if len(valid_mountain_edges) > 0:
+                max_sky_row = valid_mountain_edges[0]
+
+            # Narrow ±10px Canny window refinement
+            win_start = max(0, int(max_sky_row) - 10)
+            win_end = min(H - 1, int(max_sky_row) + 10)
+            canny_in_win = np.where(canny_edges[win_start:win_end + 1, col])[0]
+            if len(canny_in_win) > 0:
+                candidate_rows = win_start + canny_in_win
+                best_r = candidate_rows[np.argmin(np.abs(candidate_rows - max_sky_row))]
+                max_sky_row = float(best_r)
 
             boundaries[col] = float(max_sky_row)
 
-        # 5. Pre-initialize fallback boundaries (all-terrain edge case)
-        boundaries_filled = np.full(width, height * 0.5, dtype=np.float64)
-
-        # 6. Outlier interpolation + two-pass slope constraint (|dr/dc| <= 2.0 px/col)
+        # --- 5. Outlier rejection + interpolation ---
         valid = boundaries >= 0
         if np.any(valid):
-            all_cols = np.arange(width, dtype=np.float64)
-            boundaries_filled = np.interp(all_cols, all_cols[valid], boundaries[valid])
+            all_cols = np.arange(W, dtype=np.float64)
+            valid_cols = all_cols[valid]
+            valid_vals = boundaries[valid]
 
+            # Outlier filter: reject points > 30px from 5-neighbour median
+            if len(valid_vals) > 5:
+                pad = 2
+                padded = np.pad(valid_vals, (pad, pad), mode="edge")
+                from numpy.lib.stride_tricks import sliding_window_view
+                meds = np.median(sliding_window_view(padded, 5, axis=0), axis=1)
+                keep = np.abs(valid_vals - meds) <= 30.0
+                if keep.any():
+                    valid_cols = valid_cols[keep]
+                    valid_vals = valid_vals[keep]
+
+            boundaries = np.interp(all_cols, valid_cols, valid_vals)
+
+            # --- 6. Two-pass physical slope constraint ---
             max_slope = 2.0
-            # Forward pass
-            for c in range(1, width):
-                delta = boundaries_filled[c] - boundaries_filled[c - 1]
+            for c in range(1, W):
+                delta = boundaries[c] - boundaries[c - 1]
                 if abs(delta) > max_slope:
-                    boundaries_filled[c] = (
-                        boundaries_filled[c - 1] + np.sign(delta) * max_slope
-                    )
-            # Backward pass
-            for c in range(width - 2, -1, -1):
-                delta = boundaries_filled[c] - boundaries_filled[c + 1]
+                    boundaries[c] = boundaries[c - 1] + np.sign(delta) * max_slope
+            for c in range(W - 2, -1, -1):
+                delta = boundaries[c] - boundaries[c + 1]
                 if abs(delta) > max_slope:
-                    boundaries_filled[c] = (
-                        boundaries_filled[c + 1] + np.sign(delta) * max_slope
-                    )
+                    boundaries[c] = boundaries[c + 1] + np.sign(delta) * max_slope
 
-            # 7. Smoothing with 9-tap median filter
-            pad = 4
-            padded = np.pad(boundaries_filled, (pad, pad), mode="edge")
-            from numpy.lib.stride_tricks import sliding_window_view
+            # --- 7. Median + Gaussian smoothing ---
+            boundaries = self._median_filter_1d(boundaries, kernel_size=9)
+            boundaries_2d = cv2.GaussianBlur(
+                boundaries.reshape(1, -1).astype(np.float32), (7, 1), 0
+            )
+            boundaries = boundaries_2d.flatten()
 
-            meds = np.median(sliding_window_view(padded, 9, axis=0), axis=1)
-            boundaries_filled = meds
+        # --- 8. Build refined mask: 0=SKY, 255=TERRAIN ---
+        refined = np.zeros((H, W), dtype=np.uint8)
+        for col in range(W):
+            b = int(np.clip(round(boundaries[col]), 0, H - 1))
+            refined[:b, col] = 1
 
-        # 8. Build refined mask: 0=SKY (black), 255=TERRAIN (white)
-        refined_mask = np.zeros((height, width), dtype=np.uint8)
-        for col in range(width):
-            b = int(np.clip(round(boundaries_filled[col]), 0, height - 1))
-            refined_mask[:b, col] = 1
-
-        return np.where(refined_mask == 1, 0, 255).astype(np.uint8)
+        return np.where(refined == 1, 0, 255).astype(np.uint8)
 
     def extract_horizon_profile(
         self,
