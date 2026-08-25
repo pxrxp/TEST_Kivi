@@ -23,6 +23,11 @@ android.enable_androidx = True
 android.archs = arm64-v8a
 android.private_storage = True
 
+# Pin python-for-android to official release tag v2024.01.21 (forces Python 3.11.5 on device)
+p4a.fork = kivy
+p4a.branch = v2024.01.21
+
+# Disable pip build isolation so Ninja/Meson is NEVER invoked
 p4a.extra_args = --no-build-isolation
 
 version = 0.1
