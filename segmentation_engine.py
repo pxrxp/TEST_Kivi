@@ -7,7 +7,9 @@ and implements sophisticated edge purification routines for robust horizon extra
 
 import numpy as np
 import cv2
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
+
+from profile_extractor import ProfileExtractor, DEFAULT_FOV_Y_DEG, DEFAULT_BIN_DEG
 
 
 # Mock ONNX Runtime usage - will be replaced with actual inference
@@ -25,15 +27,12 @@ class MockSegmentationModel:
         # Create simplified mock sky mask (top 1/3 sky + some projections)
         mask = np.zeros((height, width), dtype=np.uint8)
         mask[: height // 3, :] = 1  # Simple sky region
-        mask[height // 2 :, int(width * 0.25) : int(width * 0.75)] = (
-            1  # Valley detection
-        )
         return mask
 
 
 class SegmentationEngine:
     """
-    Implements MobileNetV3 U-Net U-Net inference for sky segmentation
+    Implements MobileNetV3 U-Net inference for sky segmentation
     with Canny edge refinement and slope filtering.
 
     Provides robust sky/ground separation for horizon profile extraction.
@@ -60,7 +59,14 @@ class SegmentationEngine:
         self, img_np: np.ndarray, raw_unet_mask: np.ndarray
     ) -> np.ndarray:
         """
-        Refine sky mask using plate detection constraints and edge guides.
+        Refine sky mask using top-connected-sky constraints and Canny edge guides.
+
+        Pipeline (per AGENTS.md spec):
+        1. Top-connected sky filtering (flood-fill style from row <= 15,
+           fallback to largest region for steep mountain fills)
+        2. Canny ridge barrier restricted to +/-10px around U-Net boundary
+        3. Two-pass physical slope cap |dr/dc| <= 2.0 px/col
+        4. 9-tap 1D median smoothing
 
         Parameters:
         -----------
@@ -79,9 +85,8 @@ class SegmentationEngine:
         # 1. Isolate sky pixels (raw_unet_mask: 1=SKY, 0=TERRAIN)
         height, width = raw_unet_mask.shape
         sky1 = (raw_unet_mask == 1).astype(np.uint8)
-        print(f"[SEGMENTATION] Raw mask shape: {sky1.shape}")
 
-        # 2. Top-connected sky region (flood-fill from top, row <= 15)
+        # 2. Top-connected sky region
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
             sky1, connectivity=8
         )
@@ -104,8 +109,6 @@ class SegmentationEngine:
         if top_sky.sum() == 0:
             top_sky = sky1
 
-        print(f"[SEGMENTATION] Top-connected sky area: {top_sky.sum()}")
-
         # 3. Canny edge guidance
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         fine_blur = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -114,7 +117,7 @@ class SegmentationEngine:
             cv2.Canny(coarse_blur, 20, 100) > 0
         )
 
-        # 4. Build boundary array (last sky row per column)
+        # 4. Build boundary array (last sky row per column of contiguous segment)
         boundaries = np.full(width, -1, dtype=np.float64)
 
         for col in range(width):
@@ -138,9 +141,8 @@ class SegmentationEngine:
 
             boundaries[col] = float(max_sky_row)
 
-        # 5. Pre-initialize variables (guard against NameError if no valid boundaries)
+        # 5. Pre-initialize fallback boundaries (all-terrain edge case)
         boundaries_filled = np.full(width, height * 0.5, dtype=np.float64)
-        interp_boundaries = np.full(width, height * 0.5, dtype=np.float64)
 
         # 6. Outlier interpolation + two-pass slope constraint (|dr/dc| <= 2.0 px/col)
         valid = boundaries >= 0
@@ -170,207 +172,68 @@ class SegmentationEngine:
             from numpy.lib.stride_tricks import sliding_window_view
 
             meds = np.median(sliding_window_view(padded, 9, axis=0), axis=1)
-            interp_boundaries = meds
+            boundaries_filled = meds
 
         # 8. Build refined mask: 0=SKY (black), 255=TERRAIN (white)
         refined_mask = np.zeros((height, width), dtype=np.uint8)
         for col in range(width):
-            b = int(np.clip(round(interp_boundaries[col]), 0, height - 1))
+            b = int(np.clip(round(boundaries_filled[col]), 0, height - 1))
             refined_mask[:b, col] = 1
 
         return np.where(refined_mask == 1, 0, 255).astype(np.uint8)
 
-    def compute_elevation_profiles(
-        self, mask: np.ndarray, img_np: np.ndarray
-    ) -> np.ndarray:
+    def extract_horizon_profile(
+        self,
+        image_path: str,
+        r_tilt: Optional[np.ndarray] = None,
+        fov_y_deg: float = DEFAULT_FOV_Y_DEG,
+        bin_deg: float = DEFAULT_BIN_DEG,
+        profile_extractor: Optional[ProfileExtractor] = None,
+    ) -> Dict[str, Any]:
         """
-        Convert binary mask to 1D elevation angle profile vector.
-
-        Parameters:
-        -----------
-        mask : np.ndarray
-            Refined binary mask (0=sky, 255=terrain)
-        img_np : np.ndarray
-            Input RGB image array
-
-        Returns:
-        --------
-        np.ndarray
-            Elevation angle vector in degrees
-        """
-        print("[SEGMENTATION] Computing elevation profile...")
-
-        height, width = mask.shape
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        grad_magnitude = np.sqrt(grad_x**2 + grad_y**2)
-
-        # Boundary row detection with sobel edge detection
-        boundary_rows = np.full(width, -1, dtype=np.float64)
-
-        for col in range(width):
-            col_pixels = mask[:, col]
-            if np.any(col_pixels == 1):
-                edge_pixels = np.where(col_pixels == 1)[0]
-                if len(edge_pixels) > 0:
-                    max_edge_row = edge_pixels[-1]
-
-                    # Skip near-top measurements
-                    if max_edge_row < height * 0.3:
-                        boundary_rows[col] = height * 0.5  # fallback
-                    else:
-                        boundary_rows[col] = max_edge_row
-
-        # Sub-pixel refinement using parabolic interpolation around edge
-        refined_boundaries = []
-        for col in range(width):
-            row_val = boundary_rows[col]
-            if row_val < 0 or row_val >= height - 1:
-                refined_boundaries.append(row_val)
-                continue
-
-            # Get neighboring pixel differences to fit parabola
-            y_samples = []
-            x_samples = []
-            for offset in (-1, 0, 1):
-                nxt_col = max(0, min(width - 1, col + offset))
-                nxt_row_val = boundary_rows[nxt_col]
-                if nxt_row_val >= 0 and nxt_row_val <= height - 1:
-                    y_samples.append(max_edge_row)
-                    x_samples.append(offset)
-
-                    if len(y_samples) >= 3:
-                        break
-
-            if len(y_samples) >= 3:
-                # Fitting parabola on key points
-                x = np.array([1, 0, -1])
-                y = np.array([y_samples[0], y_samples[1], y_samples[2]])
-                p = np.polyfit(x, y, 2)
-                y_refined = p[0] * 0 + p[1] * 0 + p[2]
-                refined_boundaries.append(y_refined)
-            else:
-                refined_boundaries.append(row_val)
-
-        refined_boundaries = np.array(refined_boundaries)
-        float_boundaries = np.interp(
-            np.arange(width), np.arange(width), refined_boundaries
-        )
-
-        # Ray angle processing with FOV mapping
-        # Ray vector construction based on camera geometry
-        camera_fov_y = 65.0  # degrees
-        focal_length = 1.0 / np.tan(np.radians(camera_fov_y / 2))
-        rays_y = (refined_boundaries - (height / 2)) / focal_length
-        elevation_angles = np.degrees(np.arcsin(np.clip(rays_y, -1.0, 1.0)))
-
-        # Angular resolution conversion
-        pixel_size = height / 1080.0  # Normalized pixel size
-        angle_per_pixel = np.degrees(
-            np.arctan2(np.arange(width), focal_length)
-        ) - np.degrees(np.arctan2(np.arange(width) - 1, focal_length))
-        bin_deg = 0.5  # 0.5 degree bin
-
-        # Angle bin interpolation
-        n_bins = int(np.ceil(180.0 / bin_deg)) + 1
-        angle_profile = np.zeros(n_bins)
-
-        for angle in elevation_angles:
-            if -90 <= angle <= 90:
-                bin_idx = int(angle / bin_deg) + 90 // int(bin_deg)
-                if 0 <= bin_idx < n_bins:
-                    angle_profile[bin_idx] += 1.0 / width
-
-        return angle_profile
-
-    def extract_horizon_profile(self, image_path: str) -> Dict[str, Any]:
-        """
-        Extract complete 1D elevation profile from a single image.
+        Full pipeline for one captured crop: U-Net inference -> mask refinement
+        -> elevation-profile extraction (production pipeline from
+        final/src/query_profile.py via ProfileExtractor).
 
         Parameters:
         -----------
         image_path : str
-            Path to input image
+            Path to the captured RGB photo
+        r_tilt : np.ndarray (3, 3), optional
+            Camera tilt rotation built from sensor pitch/roll at capture time
+        fov_y_deg : vertical FOV in degrees (default 65.0)
+        bin_deg : azimuth bin width (default 0.5)
+        profile_extractor : optional shared ProfileExtractor instance
 
         Returns:
         --------
-        dict
-            Contains refined mask, profile data, and diagnostic info
+        dict with keys: mask, ok, status, reason, profile, start_az, diagnostics
         """
         # Load image
         img = cv2.imread(image_path)
         if img is None:
             raise ValueError(f"Cannot read image: {image_path}")
-
-        # Convert to RGB
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # Load model and predict (compatible with ModelAdapter + MockSegmentationModel)
+        # Model inference (ModelAdapter or mock)
         if hasattr(self.model, "predict_sky_mask"):
             raw_unet_mask = self.model.predict_sky_mask(img_rgb)
         else:
             raw_unet_mask = self.model.predict(img_rgb)
+
+        # Refinement: top-connected sky + Canny barrier + slope caps + median
         refined_mask = self.refine_sky_mask(img_rgb, raw_unet_mask)
 
-        # Extract profile
-        profile = self.compute_elevation_profiles(refined_mask, img_rgb)
-        profile = self._smooth_profile(profile)
-
-        profile = self._remove_outliers(profile)
-
-        elevation_angles = np.linspace(-90 + 5, 90 - 5, len(profile))
-        profile = np.concatenate([elevation_angles, profile])
-
-        return {
-            "mask": refined_mask,
-            "profile": profile,
-            "raw_profile": profile,
-            "diagnostics": {
-                "sky_cover_ratio": "0x",
-                "boundary_contrast": "0x",
-                "precision_degrees": "0x",
-            },
-        }
-
-    def _smooth_profile(self, profile: np.ndarray) -> np.ndarray:
-        """Apply smoothing and normalization to profile."""
-        if len(profile) < 3:
-            return profile
-
-        # 3-point smoothing with outlier removal
-        window = np.ones(5) / 5
-        smoothed = np.convolve(profile, window, mode="valid")
-
-        # Clean outliers
-        threshold = 2.5
-        filtered = smoothed
-        mean = np.mean(filtered)
-        std = np.std(filtered)
-
-        if std > 0:
-            filtered = filtered[np.abs(filtered - mean) <= threshold * std]
-
-        # Normalize to unit range
-        if len(filtered) > 0:
-            filtered = (filtered - filtered.min()) / (
-                filtered.max() - filtered.min() + 1e-6
-            )
-
-        return filtered
-
-    def _remove_outliers(self, profile: np.ndarray) -> np.ndarray:
-        """Remove extreme outliers from profile."""
-        if len(profile) < 3:
-            return profile
-
-        filtered = profile.copy()
-        sorted_vals = np.sort(filtered)
-        outliers = sorted_vals[
-            (sorted_vals - sorted_vals.min())
-            > 2 * (sorted_vals.max() - sorted_vals.min())
-        ]
-        if len(outliers) > 0:
-            replacement = np.median(filtered[~np.isin(filtered, outliers)])
-            filtered[~np.isin(filtered, outliers)] = replacement
-        return filtered
+        # Production-grade 1D profile extraction with quality gates
+        extractor = profile_extractor or ProfileExtractor(
+            fov_y_deg=fov_y_deg, bin_deg=bin_deg
+        )
+        result = extractor.extract_elevation_profile(
+            refined_mask,
+            image=img_rgb,
+            r_tilt=r_tilt,
+            fov_y_deg=fov_y_deg,
+            bin_deg=bin_deg,
+        )
+        result["mask"] = refined_mask
+        return result

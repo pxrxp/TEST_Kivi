@@ -13,14 +13,13 @@ import os
 import sys
 import threading
 from typing import Dict, Any, List, Optional
-import cv2
 import numpy as np
 
 # Import local modules
-from sensor_manager import SensorManager
+from sensor_manager import SensorManager, build_tilt_matrix
 from camera_overlay import CameraOverlay, LevelBanner
 from segmentation_engine import SegmentationEngine
-from profile_extractor import ProfileExtractor
+from profile_extractor import ProfileExtractor, fuse_profiles_world_frame
 
 # Kivy/KivyMD imports
 from kivy.app import App
@@ -287,29 +286,35 @@ class SkylineGeolocationApp(App):
 
         def process_thread():
             try:
-                # Extract horizon profile
-                result = self.segmentation_engine.extract_horizon_profile(img_path)
+                # Tilt correction matrix from phone pitch/roll at capture time
+                r_tilt = build_tilt_matrix(
+                    sensor_data["pitch_deg"], sensor_data["roll_deg"]
+                )
 
-                # Extract refined profile using profile extractor
-                mask = result["mask"]
-                img = cv2.imread(img_path)
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                profile_result = self.profile_extractor.create_profile(mask, img_rgb)
+                # Full production pipeline for this crop:
+                # U-Net -> refine_sky_mask -> sub-pixel profile @ 0.5 deg bins
+                result = self.segmentation_engine.extract_horizon_profile(
+                    img_path,
+                    r_tilt=r_tilt,
+                    fov_y_deg=self.profile_extractor.fov_y_deg,
+                    bin_deg=self.profile_extractor.bin_deg,
+                    profile_extractor=self.profile_extractor,
+                )
 
-                # Store results
-                profile_data = profile_result["profile_data"]
                 crop_data = {
                     "image_path": img_path,
                     "sensor_data": sensor_data,
-                    "profile": profile_data.tolist()
-                    if hasattr(profile_data, "tolist")
-                    else list(profile_data),
-                    "diagnostics": {
-                        "sky_ratio": float(np.mean(mask == 0)),
-                        "boundary_coverage": 0.98,
-                        "profile_std_deg": 4.12,
-                        "profile_max_deg": 18.5,
-                    },
+                    "ok": bool(result["ok"]),
+                    "status": result["status"],
+                    "reason": result["reason"],
+                    # Camera-frame azimuth grid + elevations for world-frame fusion
+                    "profile": np.asarray(result["profile"]).tolist()
+                    if result["profile"] is not None
+                    else [],
+                    "start_az": result["start_az"],
+                    "bin_deg": self.profile_extractor.bin_deg,
+                    "heading_deg": sensor_data["heading_deg"],
+                    "diagnostics": result["diagnostics"],
                 }
 
                 self.crop_manager.crops[crop_idx]["processed"] = crop_data
@@ -339,19 +344,63 @@ class SkylineGeolocationApp(App):
             all_crops = self.crop_manager.get_crops()
             processed_crops = [c.get("processed", {}) for c in all_crops]
 
-            # Create payload
+            # Multi-photo perspective fusion into one wide-FOV profile by heading
+            fusion = fuse_profiles_world_frame(
+                processed_crops, bin_deg=self.profile_extractor.bin_deg
+            )
+            fused_profile = fusion["profile"]
+            valid = fused_profile[np.isfinite(fused_profile)]
+
+            first_sensor = (
+                processed_crops[0].get("sensor_data", {})
+                if processed_crops
+                else {}
+            )
+
+            # Payload matching the AGENTS.md standalone packaging spec
             payload = {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "crops": processed_crops,
-                "combined_profile": self._fuse_profiles(
-                    [c.get("profile", []) for c in processed_crops]
-                ),
+                "sensors": {
+                    "pitch_deg": first_sensor.get("pitch_deg", 0.0),
+                    "roll_deg": first_sensor.get("roll_deg", 0.0),
+                    "heading_deg": first_sensor.get("heading_deg", 0.0),
+                    "fov_y_deg": first_sensor.get("fov_y_deg", 65.0),
+                },
                 "diagnostics": {
                     "total_crops": len(processed_crops),
+                    "crops_ok": sum(1 for c in processed_crops if c.get("ok")),
+                    "fused_coverage_deg": round(fusion["coverage_deg"], 2),
+                    "wide_fov_ok": fusion["wide_fov_ok"],
+                    "profile_std_deg": round(float(np.std(valid)), 3)
+                    if valid.size
+                    else 0.0,
+                    "profile_max_deg": round(float(np.max(valid)), 3)
+                    if valid.size
+                    else 0.0,
                     "session_duration": time.time() - self.session_start
                     if hasattr(self, "session_start")
                     else 0,
                 },
+                # NaN gaps serialized as null
+                "profile": [
+                    None if not np.isfinite(v) else round(float(v), 4)
+                    for v in fused_profile
+                ],
+                "crops": [
+                    {
+                        "image_path": c.get("image_path"),
+                        "sensor_data": c.get("sensor_data"),
+                        "ok": c.get("ok"),
+                        "status": c.get("status"),
+                        "reason": c.get("reason"),
+                        "start_az": c.get("start_az"),
+                        "bin_deg": c.get("bin_deg"),
+                        "heading_deg": c.get("heading_deg"),
+                        "profile": c.get("profile", []),
+                        "diagnostics": c.get("diagnostics", {}),
+                    }
+                    for c in processed_crops
+                ],
             }
 
             # Save to file
@@ -361,9 +410,16 @@ class SkylineGeolocationApp(App):
             with open(output_file, "w") as f:
                 json.dump(payload, f, indent=2)
 
+            coverage_msg = (
+                "WIDE-FOV OK"
+                if fusion["wide_fov_ok"]
+                else f"LOW COVERAGE ({fusion['coverage_deg']:.0f}° < 200°)"
+            )
             self.show_popup(
                 "Session Complete",
-                f"All {len(processed_crops)} crops captured!\nPayload saved to:\n{output_file}",
+                f"All {len(processed_crops)} crops captured!\n"
+                f"Fused coverage: {fusion['coverage_deg']:.1f}° ({coverage_msg})\n"
+                f"Payload saved to:\n{output_file}",
             )
 
             # Reset for next session
@@ -372,22 +428,6 @@ class SkylineGeolocationApp(App):
         except Exception as e:
             self.show_popup("Export Error", str(e))
 
-    def _fuse_profiles(self, profiles: List[List[float]]) -> List[float]:
-        """Fuse multiple profiles into combined wide-FOV profile."""
-        if not profiles:
-            return []
-
-        # Simple concatenation with overlap handling
-        fused = []
-        for i, profile in enumerate(profiles):
-            if i == 0:
-                fused.extend(profile)
-            else:
-                # Skip overlap region
-                overlap = len(profile) // 6  # ~30 degrees overlap
-                fused.extend(profile[overlap:])
-
-        return fused
 
     def show_popup(self, title: str, message: str):
         """Show a popup dialog."""

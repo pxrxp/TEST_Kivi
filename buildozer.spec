@@ -7,7 +7,7 @@ package.domain = org.skyline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
 
-requirements = python3,kivy==2.3.0,plyer,pillow,numpy<2.0.0
+requirements = python3,kivy==2.3.0,plyer,pillow,numpy<2.0.0,opencv
 
 orientation = portrait
 

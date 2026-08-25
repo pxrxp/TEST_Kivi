@@ -9,6 +9,24 @@ import math
 import time
 from typing import Dict, Any
 
+import numpy as np
+def build_tilt_matrix(pitch_deg: float, roll_deg: float):
+    """
+    Build the 3x3 camera tilt rotation matrix from phone pitch/roll so that
+    extracted elevation angles are corrected into the world frame (same role
+    as GSV `cam_R_tilt` in the production pipeline).
+
+    Convention (camera frame: x right, y up, -z forward):
+        R = Ry(roll) @ Rx(pitch)
+    """
+    p = math.radians(pitch_deg)
+    r = math.radians(roll_deg)
+    cp, sp = math.cos(p), math.sin(p)
+    cr, sr = math.cos(r), math.sin(r)
+    rx = np.array([[1.0, 0.0, 0.0], [0.0, cp, -sp], [0.0, sp, cp]])
+    ry = np.array([[cr, 0.0, sr], [0.0, 1.0, 0.0], [-sr, 0.0, cr]])
+    return ry @ rx
+
 
 class MockAccelerometer:
     """Mock accelerometer for desktop testing."""
