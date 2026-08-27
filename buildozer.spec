@@ -5,18 +5,22 @@ package.name = skylinegeolocation
 package.domain = org.skyline
 
 source.dir = .
-source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,tflite,json,txt,pt
+source.include_exts = py,png,jpg,jpeg,kv,atlas,onnx,npz,tflite,json,txt,pt
 
 requirements = python3,kivy==2.3.0,plyer,pillow,numpy<2.0.0,opencv
 
-orientation = portrait
+orientation = sensorLandscape
 
-permissions = CAMERA, INTERNET, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
+permissions = CAMERA, INTERNET
+android.permissions = CAMERA, INTERNET
 
-android.api = 33
+android.features = android.hardware.camera, android.hardware.camera.autofocus
+
+android.api = 34
 android.minapi = 24
+android.sdk = 34
+android.build_tools_version = 34.0.0
 android.ndk = 25b
-android.build_tools_version = 33.0.2
 
 android.accept_ndk_license = True
 android.enable_androidx = True

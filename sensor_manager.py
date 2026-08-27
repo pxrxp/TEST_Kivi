@@ -64,7 +64,7 @@ class SensorManager:
         self._roll_deg: float = 0.0
         self._heading_deg: float = 0.0
         
-        # Low-pass filter smoothing factor (reduces accelerometer noise)
+        # Exponential Moving Average smoothing factor
         self._alpha = 0.20
 
     def start(self) -> bool:

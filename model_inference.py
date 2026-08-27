@@ -7,7 +7,7 @@ available backend (OpenCV DNN for Android/mobile, ONNX Runtime, TFLite, PyTorch,
 
 import os
 import numpy as np
-from typing import Tuple, Optional
+from typing import Optional
 from PIL import Image
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -40,7 +40,7 @@ class ModelAdapter:
                 self.net = cv2.dnn.readNetFromONNX(self.model_path)
                 self.backend = self.net
                 self.backend_type = "opencv_onnx"
-                print(f"[INFO] Successfully loaded ONNX model via OpenCV DNN backend.")
+                print("[INFO] Successfully loaded ONNX model via OpenCV DNN backend.")
                 return
             except Exception as e:
                 print(f"[DEBUG] OpenCV DNN load failed: {e}")
@@ -50,7 +50,7 @@ class ModelAdapter:
             import onnxruntime as ort
             self.backend = ort.InferenceSession(self.model_path)
             self.backend_type = "onnx"
-            print(f"[INFO] Successfully loaded model via ONNX Runtime backend.")
+            print("[INFO] Successfully loaded model via ONNX Runtime backend.")
             return
         except Exception:
             pass
@@ -62,7 +62,7 @@ class ModelAdapter:
             self.interpreter.allocate_tensors()
             self.backend = self.interpreter
             self.backend_type = "tflite"
-            print(f"[INFO] Successfully loaded model via TFLite backend.")
+            print("[INFO] Successfully loaded model via TFLite backend.")
             return
         except Exception:
             pass
@@ -75,7 +75,7 @@ class ModelAdapter:
                 self.model = checkpoint
                 self.backend = checkpoint
                 self.backend_type = "torch"
-                print(f"[INFO] Successfully loaded model via PyTorch backend.")
+                print("[INFO] Successfully loaded model via PyTorch backend.")
                 return
             except Exception:
                 pass

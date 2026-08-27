@@ -71,7 +71,7 @@ class SkylineDB:
         }
 
     def find_db_path(self) -> Optional[str]:
-        """Search common locations for bundled skyline DB."""
+        """Search common locations for a bundled skyline DB."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         candidates = [
             os.path.join(base_dir, "skyline_db.npz"),
