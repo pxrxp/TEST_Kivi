@@ -31,10 +31,6 @@ from kivy.utils import platform
 from kivy.core.window import Window
 
 
-# Lock desktop window size to 16:9 Landscape
-Window.size = (1280, 720)
-
-
 def enforce_android_landscape():
     """Enforce landscape orientation on Android UI thread."""
     if platform == "android":
@@ -118,7 +114,7 @@ class SkylineGeolocationApp(App):
             print("[APP] No skyline DB found — matching disabled")
 
     def build(self):
-        """Build main landscape UI layout."""
+        """Build main landscape UI layout across full screen."""
         enforce_android_landscape()
         self.sensor_manager.start()
 
@@ -128,19 +124,17 @@ class SkylineGeolocationApp(App):
         self.camera_container = FloatLayout(size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
         self.layout.add_widget(self.camera_container)
 
-        # Status Label shown while waiting for camera access
+        # Status Label shown while camera loads
         self.cam_status_label = Label(
-            text="Waiting for Camera Access...",
+            text="Waiting for Camera Permission...",
             color=(0.9, 0.9, 0.9, 1.0),
-            font_size="16sp",
+            font_size="18sp",
             pos_hint={"center_x": 0.5, "center_y": 0.5},
         )
         self.camera_container.add_widget(self.cam_status_label)
 
         # Transparent HUD Overlay Layer (Layer 1)
         self.overlay = CameraOverlay(
-            screen_width=int(Window.width),
-            screen_height=int(Window.height),
             fov_y_deg=65.0,
         )
         self.layout.add_widget(self.overlay)
@@ -151,11 +145,24 @@ class SkylineGeolocationApp(App):
             color=(1.0, 1.0, 1.0, 0.9),
             font_size="14sp",
             bold=True,
-            size_hint=(None, None),
-            size=(240, 36),
+            size_hint=(0.3, 0.08),
             pos_hint={"x": 0.02, "y": 0.04},
         )
         self.layout.add_widget(self.info_label)
+
+        # Fallback Permission Prompt Button
+        self.perm_btn = Button(
+            text="🔑 REQUEST CAMERA PERMISSION",
+            font_size="14sp",
+            bold=True,
+            size_hint=(0.4, 0.12),
+            pos_hint={"center_x": 0.5, "center_y": 0.5},
+            background_color=(0.1, 0.6, 1.0, 1.0),
+            opacity=0,
+            disabled=True,
+        )
+        self.perm_btn.bind(on_press=lambda inst: self.request_android_permissions())
+        self.layout.add_widget(self.perm_btn)
 
         # Capture Button (Bottom Center)
         self.capture_btn = Button(
@@ -178,7 +185,7 @@ class SkylineGeolocationApp(App):
 
     def on_start(self):
         """Trigger Android native permission request after window focus is acquired."""
-        Clock.schedule_once(lambda dt: self.request_android_permissions(), 1.0)
+        Clock.schedule_once(lambda dt: self.request_android_permissions(), 0.5)
 
     def request_android_permissions(self):
         """Request Camera permission natively once window focus is secured."""
@@ -188,6 +195,7 @@ class SkylineGeolocationApp(App):
 
                 if check_permission(Permission.CAMERA):
                     print("[PERMISSIONS] Camera permission already granted")
+                    self.hide_perm_button()
                     Clock.schedule_once(lambda dt: self.init_camera(), 0)
                     return
 
@@ -197,10 +205,11 @@ class SkylineGeolocationApp(App):
                     def _on_main_thread(dt):
                         if results and results[0]:
                             print("[PERMISSIONS] Native prompt: Camera permission GRANTED")
+                            self.hide_perm_button()
                             self.init_camera()
                         else:
                             print("[PERMISSIONS] Native prompt: Camera permission DENIED")
-                            self.cam_status_label.text = "Camera Permission Denied."
+                            self.show_perm_button()
 
                     Clock.schedule_once(_on_main_thread, 0)
 
@@ -210,6 +219,15 @@ class SkylineGeolocationApp(App):
                 Clock.schedule_once(lambda dt: self.init_camera(), 0)
         else:
             Clock.schedule_once(lambda dt: self.init_camera(), 0)
+
+    def show_perm_button(self):
+        self.cam_status_label.text = "Camera Permission Required."
+        self.perm_btn.opacity = 1
+        self.perm_btn.disabled = False
+
+    def hide_perm_button(self):
+        self.perm_btn.opacity = 0
+        self.perm_btn.disabled = True
 
     def init_camera(self):
         """Instantiate and attach live camera preview to screen."""

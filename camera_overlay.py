@@ -22,15 +22,11 @@ class CameraOverlay(FloatLayout):
     def __init__(
         self,
         camera: Any = None,
-        screen_width: int = 1280,
-        screen_height: int = 720,
         fov_y_deg: float = 65.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.camera = camera
-        self.screen_width = screen_width
-        self.screen_height = screen_height
         self.fov_y_deg = fov_y_deg
 
         self.sensor_manager = None
@@ -43,7 +39,7 @@ class CameraOverlay(FloatLayout):
         self.bind(pos=self._update_pos_size, size=self._update_pos_size)
 
     def _init_hud_graphics(self):
-        """Initialize canvas graphics (NO solid background!)."""
+        """Initialize canvas graphics across full screen (NO solid background!)."""
         with self.canvas:
             self.hud_color = Color(0.0, 1.0, 0.4, 0.9)
 
@@ -58,14 +54,14 @@ class CameraOverlay(FloatLayout):
             self.banner_rect = Rectangle(pos=(0, 0), size=(0, 0))
 
     def _init_hud_widgets(self):
-        """Create status text labels."""
+        """Create status text labels using relative layout hints."""
         self.status_label = Label(
             text="HOLD PHONE LEVEL",
             color=(0.0, 1.0, 0.4, 1.0),
             font_size="18sp",
             bold=True,
-            size_hint=(None, None),
-            height=40,
+            size_hint=(0.5, 0.08),
+            pos_hint={"center_x": 0.5, "top": 0.98},
         )
 
         self.pitch_label = Label(
@@ -73,8 +69,8 @@ class CameraOverlay(FloatLayout):
             color=(1.0, 1.0, 1.0, 0.9),
             font_size="14sp",
             bold=True,
-            size_hint=(None, None),
-            height=30,
+            size_hint=(0.25, 0.08),
+            pos_hint={"x": 0.02, "top": 0.98},
         )
 
         self.roll_label = Label(
@@ -82,8 +78,8 @@ class CameraOverlay(FloatLayout):
             color=(1.0, 1.0, 1.0, 0.9),
             font_size="14sp",
             bold=True,
-            size_hint=(None, None),
-            height=30,
+            size_hint=(0.25, 0.08),
+            pos_hint={"right": 0.98, "top": 0.98},
         )
 
         self.add_widget(self.status_label)
@@ -91,9 +87,9 @@ class CameraOverlay(FloatLayout):
         self.add_widget(self.roll_label)
 
     def _update_pos_size(self, *args):
-        """Position UI elements dynamically across landscape screen."""
-        w = float(self.width) if self.width > 1 else float(self.screen_width)
-        h = float(self.height) if self.height > 1 else float(self.screen_height)
+        """Position HUD graphics relative to full screen size."""
+        w = float(self.width) if self.width > 1 else 1280.0
+        h = float(self.height) if self.height > 1 else 720.0
 
         cx, cy = w / 2.0, h / 2.0
 
@@ -105,19 +101,9 @@ class CameraOverlay(FloatLayout):
         ]
 
         # Top Banner Overlay
-        banner_h = 50.0
+        banner_h = h * 0.08
         self.banner_rect.pos = (0, h - banner_h)
         self.banner_rect.size = (w, banner_h)
-
-        # Label positions
-        self.status_label.width = w * 0.5
-        self.status_label.pos = (w * 0.25, h - 45.0)
-
-        self.pitch_label.width = w * 0.22
-        self.pitch_label.pos = (w * 0.02, h - 40.0)
-
-        self.roll_label.width = w * 0.22
-        self.roll_label.pos = (w * 0.76, h - 40.0)
 
         if self._last_sensor_data:
             self._update_display(self._last_sensor_data)
@@ -141,8 +127,8 @@ class CameraOverlay(FloatLayout):
         self.pitch_label.text = f"PITCH: {pitch:+.1f}°"
         self.roll_label.text = f"ROLL: {roll:+.1f}°"
 
-        w = float(self.width) if self.width > 1 else float(self.screen_width)
-        h = float(self.height) if self.height > 1 else float(self.screen_height)
+        w = float(self.width) if self.width > 1 else 1280.0
+        h = float(self.height) if self.height > 1 else 720.0
         cx, cy = w / 2.0, h / 2.0
 
         # Vertical translation per degree of pitch

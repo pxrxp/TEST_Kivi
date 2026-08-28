@@ -11,12 +11,13 @@ requirements = python3,kivy==2.3.0,plyer,pillow,numpy<2.0.0,opencv
 
 orientation = landscape
 
-permissions = CAMERA, INTERNET, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
+permissions = CAMERA, INTERNET
+android.permissions = CAMERA, INTERNET
 
-android.api = 36
+android.api = 34
 android.minapi = 24
-android.sdk = 36
-android.build_tools_version = 36.0.0
+android.sdk = 34
+android.build_tools_version = 34.0.0
 android.ndk = 25b
 
 android.accept_ndk_license = True
