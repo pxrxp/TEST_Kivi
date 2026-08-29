@@ -2,9 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -12,63 +10,31 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Java 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache git libffi-dev libssl-dev python3-dev
+          pip install --upgrade pip setuptools buildozer Cython
 
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          git \
-          ffmpeg \
-          libsdl2-dev \
-          libsdl2-image-dev \
-          libsdl2-mixer-dev \
-          libsdl2-ttf-dev \
-          libportmidi-dev \
-          libswscale-dev \
-          libavformat-dev \
-          libavcodec-dev \
-          zlib1g-dev \
-          openjdk-17-jdk \
-          zip \
-          unzip \
-          autoconf \
-          libtool \
-          pkg-config \
-          cmake \
-          gfortran \
-          libblas-dev \
-          liblapack-dev \
-          ccache
+      - name: Pre-cache FreeType source archive (Bypass 502 mirror)
+        run: |
+          mkdir -p ~/.buildozer/cache
+          curl -L "https://downloads.sourceforge.net/project/freetype/freetype2/2.10.1/freetype-2.10.1.tar.gz" -o ~/.buildozer/cache/freetype-2.10.1.tar.gz
 
-    - name: Install Pinned Build Tools
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install "cython==0.29.36" "buildozer==1.5.0"
+      - name: Build APK with Buildozer
+        run: |
+          yes | buildozer -v android debug
 
-    - name: Clean Old Build Cache
-      run: |
-        rm -rf .buildozer
-
-    - name: Build APK with Buildozer
-      run: |
-        yes | buildozer -v android debug
-
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: skyline-geolocation-apk
-        path: bin/*.apk
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skyline-geolocation-apk
+          path: bin/*.apk
