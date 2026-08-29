@@ -1,7 +1,8 @@
 """
 Main Application Module
 
-GPS-Free Skyline Geolocation App with Live Camera Feed and Landscape HUD.
+GPS-Free Skyline Geolocation App with Live Camera Feed, Landscape HUD,
+and On-Device Mobile Diagnostics.
 """
 
 import json
@@ -9,6 +10,7 @@ import time
 import os
 import threading
 from typing import Dict, Any, List
+import cv2
 import numpy as np
 
 # Local modules
@@ -18,17 +20,19 @@ from segmentation_engine import SegmentationEngine
 from profile_extractor import ProfileExtractor, fuse_profiles_world_frame
 from matching import match_query
 from db_loader import SkylineDB, find_nearest_known_place
+from mobile_diagnostics import run_mobile_feasibility_tests
 
 # Kivy imports
 from kivy.app import App
 from kivy.uix.button import Button
 from kivy.uix.label import Label
+from kivy.uix.image import Image as KivyImage
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.popup import Popup
 from kivy.uix.camera import Camera
 from kivy.clock import Clock
 from kivy.utils import platform
-from kivy.core.window import Window
 
 
 def enforce_android_landscape():
@@ -43,7 +47,6 @@ def enforce_android_landscape():
                 PythonActivity = autoclass("org.kivy.android.PythonActivity")
                 ActivityInfo = autoclass("android.content.pm.ActivityInfo")
                 activity = PythonActivity.mActivity
-                # 6 = SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 activity.setRequestedOrientation(6)
 
             _set_orient()
@@ -52,13 +55,34 @@ def enforce_android_landscape():
             print(f"[ORIENTATION] Landscape set failed: {e}")
 
 
+def generate_segmentation_preview(image_path: str, mask: np.ndarray, output_preview_path: str):
+    """Overlays extracted horizon boundary onto photo in emerald green."""
+    img = cv2.imread(image_path)
+    if img is None or mask is None:
+        return
+
+    H, W = mask.shape[:2]
+    if img.shape[:2] != (H, W):
+        img = cv2.resize(img, (W, H))
+
+    sky_mask = (mask == 0)
+    overlay = img.copy()
+    overlay[sky_mask] = (overlay[sky_mask] * 0.6 + np.array([255, 180, 0]) * 0.4).astype(np.uint8)
+
+    terrain_binary = (mask == 255).astype(np.uint8)
+    contours, _ = cv2.findContours(terrain_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    cv2.drawContours(overlay, contours, -1, (0, 255, 102), 3)
+
+    cv2.imwrite(output_preview_path, overlay)
+
+
 class MultiCropManager:
     """Manages multi-photo capture for 360° perspective fusion."""
 
     def __init__(self, max_crops: int = 3):
         self.max_crops = max_crops
         self.crops = []
-        self.crop_labels = ["FRONT (0°)", "RIGHT (+90°)", "REAR (+180°)"]
+        self.crop_labels = ["FRONT (0 deg)", "RIGHT (+90 deg)", "REAR (+180 deg)"]
 
     def add_crop(self, image: Any, sensor_data: Dict, heading: float) -> bool:
         if len(self.crops) >= self.max_crops:
@@ -120,7 +144,7 @@ class SkylineGeolocationApp(App):
 
         self.layout = FloatLayout()
 
-        # Camera Container Layer (Layer 0 - Full Screen Behind Overlay)
+        # Camera Container Layer (Layer 0)
         self.camera_container = FloatLayout(size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
         self.layout.add_widget(self.camera_container)
 
@@ -134,14 +158,24 @@ class SkylineGeolocationApp(App):
         self.camera_container.add_widget(self.cam_status_label)
 
         # Transparent HUD Overlay Layer (Layer 1)
-        self.overlay = CameraOverlay(
-            fov_y_deg=65.0,
-        )
+        self.overlay = CameraOverlay(fov_y_deg=65.0)
         self.layout.add_widget(self.overlay)
+
+        # Diagnostics Button (Top Left)
+        self.diag_btn = Button(
+            text="[TEST] DIAGNOSTICS",
+            font_size="12sp",
+            bold=True,
+            size_hint=(0.20, 0.08),
+            pos_hint={"x": 0.02, "top": 0.98},
+            background_color=(0.2, 0.6, 1.0, 0.8),
+        )
+        self.diag_btn.bind(on_press=lambda inst: self.run_diagnostics_modal())
+        self.layout.add_widget(self.diag_btn)
 
         # Info Badge (Bottom Left)
         self.info_label = Label(
-            text="HDG: 0° | CROP 1 OF 3",
+            text="HDG: 0 deg | CROP 1 OF 3",
             color=(1.0, 1.0, 1.0, 0.9),
             font_size="14sp",
             bold=True,
@@ -152,7 +186,7 @@ class SkylineGeolocationApp(App):
 
         # Fallback Permission Prompt Button
         self.perm_btn = Button(
-            text="🔑 REQUEST CAMERA PERMISSION",
+            text="[PERM] REQUEST CAMERA PERMISSION",
             font_size="14sp",
             bold=True,
             size_hint=(0.4, 0.12),
@@ -166,7 +200,7 @@ class SkylineGeolocationApp(App):
 
         # Capture Button (Bottom Center)
         self.capture_btn = Button(
-            text="📸 CAPTURE CROP 1",
+            text="[CAPTURE] CROP 1",
             font_size="16sp",
             bold=True,
             size_hint=(0.42, 0.12),
@@ -181,14 +215,43 @@ class SkylineGeolocationApp(App):
         self.overlay.start_update_loop(interval=0.08)
         self.sensor_update_event = Clock.schedule_interval(self.update_sensors, 0.08)
 
+        # Auto-run diagnostics on startup
+        Clock.schedule_once(lambda dt: run_mobile_feasibility_tests(self.segmentation_engine, self.skyline_db), 2.0)
+
         return self.layout
 
+    def run_diagnostics_modal(self):
+        """Runs diagnostics and displays a modal summary."""
+        test_data = run_mobile_feasibility_tests(self.segmentation_engine, self.skyline_db)
+
+        content = BoxLayout(orientation="vertical", spacing=8, padding=12)
+
+        lines = [
+            f"Overall Status: {'ALL 5 TESTS PASSED [FEASIBLE]' if test_data['all_passed'] else 'SOME TESTS FAILED'}",
+            f"Total Latency: {test_data['total_time_ms']} ms",
+            "--------------------------------------------------",
+        ]
+        for name, passed, dt in test_data["tests"]:
+            status_str = "[PASS]" if passed else "[FAIL]"
+            lines.append(f"{status_str} {name}: {dt}")
+
+        lbl = Label(text="\n".join(lines), font_size="13sp", halign="left")
+        content.add_widget(lbl)
+
+        close_btn = Button(text="CLOSE DIAGNOSTICS", size_hint=(1, 0.2), background_color=(0.2, 0.6, 1.0, 1.0))
+        popup = Popup(
+            title="Mobile Feasibility Diagnostics",
+            content=content,
+            size_hint=(0.8, 0.7),
+        )
+        close_btn.bind(on_press=lambda inst: popup.dismiss())
+        content.add_widget(close_btn)
+        popup.open()
+
     def on_start(self):
-        """Trigger Android native permission request after window focus is acquired."""
         Clock.schedule_once(lambda dt: self.request_android_permissions(), 0.5)
 
     def request_android_permissions(self):
-        """Request Camera permission natively once window focus is secured."""
         if platform == "android":
             try:
                 from android.permissions import request_permissions, Permission, check_permission
@@ -198,8 +261,6 @@ class SkylineGeolocationApp(App):
                     self.hide_perm_button()
                     Clock.schedule_once(lambda dt: self.init_camera(), 0)
                     return
-
-                print("[PERMISSIONS] Triggering native Android permission prompt...")
 
                 def _permission_callback(permissions, results):
                     def _on_main_thread(dt):
@@ -230,7 +291,6 @@ class SkylineGeolocationApp(App):
         self.perm_btn.disabled = True
 
     def init_camera(self):
-        """Instantiate and attach live camera preview to screen."""
         if self.camera is not None:
             return
 
@@ -249,7 +309,6 @@ class SkylineGeolocationApp(App):
             self.camera_container.clear_widgets()
             self.camera_container.add_widget(cam)
 
-            # Enable play AFTER attaching to parent layout
             cam.play = True
             print("[CAMERA] Live camera feed attached and streaming successfully")
         except Exception as e:
@@ -257,7 +316,6 @@ class SkylineGeolocationApp(App):
             self.cam_status_label.text = f"Camera Error: {e}"
 
     def update_sensors(self, dt):
-        """Update sensor readings and UI control states."""
         self.sensor_manager.update_sensors()
         sensor_data = self.sensor_manager.get_sensor_data()
         self.overlay.update_sensor_data(self.sensor_manager)
@@ -266,16 +324,16 @@ class SkylineGeolocationApp(App):
         heading = sensor_data["heading_deg"]
         prompt = self.crop_manager.get_current_prompt()
 
-        self.info_label.text = f"HDG: {heading:.0f}° | {prompt}"
+        self.info_label.text = f"HDG: {heading:.0f} deg | {prompt}"
 
         self.capture_enabled = is_level
         self.capture_btn.disabled = not is_level
         if is_level:
             self.capture_btn.background_color = (0.0, 0.8, 0.4, 1.0)
-            self.capture_btn.text = f"📸 CAPTURE ({prompt.split(':')[0]})"
+            self.capture_btn.text = f"[CAPTURE] ({prompt.split(':')[0]})"
         else:
             self.capture_btn.background_color = (0.35, 0.35, 0.35, 0.8)
-            self.capture_btn.text = "⏳ HOLD PHONE LEVEL"
+            self.capture_btn.text = "HOLD PHONE LEVEL"
 
     def on_capture(self, instance):
         if not self.capture_enabled:
@@ -305,9 +363,6 @@ class SkylineGeolocationApp(App):
         self.crop_manager.add_crop(img_path, sensor_data, sensor_data["heading_deg"])
         self.process_crop(img_path, sensor_data, crop_idx)
 
-        if self.crop_manager.is_complete():
-            self.finalize_session()
-
     def save_texture(self, texture, filepath):
         from PIL import Image as PILImage
         width, height = texture.size
@@ -330,8 +385,13 @@ class SkylineGeolocationApp(App):
                     profile_extractor=self.profile_extractor,
                 )
 
+                preview_path = img_path.replace(".png", "_preview.png")
+                if result.get("mask") is not None:
+                    generate_segmentation_preview(img_path, result["mask"], preview_path)
+
                 crop_data = {
                     "image_path": img_path,
+                    "preview_path": preview_path,
                     "sensor_data": sensor_data,
                     "ok": bool(result["ok"]),
                     "status": result["status"],
@@ -346,10 +406,43 @@ class SkylineGeolocationApp(App):
                 }
 
                 self.crop_manager.crops[crop_idx]["processed"] = crop_data
+
+                Clock.schedule_once(
+                    lambda dt, ci=crop_idx, cd=crop_data: self.show_segmentation_preview_popup(ci, cd)
+                )
+
             except Exception as e:
                 print(f"[PROCESS] Processing error: {e}")
 
         threading.Thread(target=process_thread, daemon=True).start()
+
+    def show_segmentation_preview_popup(self, crop_idx: int, crop_data: Dict):
+        content_box = BoxLayout(orientation="vertical", spacing=8, padding=10)
+
+        preview_path = crop_data.get("preview_path")
+        if preview_path and os.path.exists(preview_path):
+            img_widget = KivyImage(source=preview_path, allow_stretch=True, keep_ratio=True)
+            content_box.add_widget(img_widget)
+
+        status_txt = f"Crop {crop_idx + 1} Segmented [OK] ({crop_data.get('status', 'OK')})"
+        lbl = Label(text=status_txt, font_size="14sp", bold=True, size_hint=(1, 0.15))
+        content_box.add_widget(lbl)
+
+        close_btn = Button(text="CONTINUE NEXT CROP >>", size_hint=(1, 0.2), background_color=(0.0, 0.8, 0.4, 1.0))
+        popup = Popup(
+            title=f"Segmented Horizon Preview - Crop {crop_idx + 1}",
+            content=content_box,
+            size_hint=(0.85, 0.85),
+            auto_dismiss=False,
+        )
+        close_btn.bind(on_press=lambda inst: self.on_preview_dismiss(popup))
+        content_box.add_widget(close_btn)
+        popup.open()
+
+    def on_preview_dismiss(self, popup: Popup):
+        popup.dismiss()
+        if self.crop_manager.is_complete():
+            self.finalize_session()
 
     def finalize_session(self):
         try:
@@ -402,7 +495,7 @@ class SkylineGeolocationApp(App):
                 )
 
             lines = [
-                f"360° Fusion Coverage: {fusion['coverage_deg']:.1f}°",
+                f"360 deg Fusion Coverage: {fusion['coverage_deg']:.1f} deg",
             ]
 
             if match_result and match_result["ok"]:
@@ -410,8 +503,8 @@ class SkylineGeolocationApp(App):
                 place = find_nearest_known_place(top["lat"], top["lon"])
                 lines += [
                     "",
-                    f"📍 LOCATION MATCHED",
-                    f"  Lat: {top['lat']:.4f}°  Lon: {top['lon']:.4f}°",
+                    "LOCATION MATCHED",
+                    f"  Lat: {top['lat']:.4f} deg  Lon: {top['lon']:.4f} deg",
                     f"  Near: {place[0]} ({place[2]})" if place else "",
                 ]
 

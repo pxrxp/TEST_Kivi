@@ -2,7 +2,7 @@
 GPS-Free Sensor Manager Module
 
 Handles accelerometer & compass sensors with Landscape mode axis mapping
-and low-pass noise filtering.
+and low-pass noise filtering. Font-safe text guidance.
 """
 
 import math
@@ -145,10 +145,10 @@ class SensorManager:
 
         ax_n, ay_n, az_n = ax / norm, ay / norm, az / norm
 
-        # Pitch = tilt forward/backward (dependent ONLY on AZ screen normal & AX vertical)
+        # Pitch = tilt forward/backward
         pitch = math.degrees(math.atan2(-az_n, ax_n if abs(ax_n) > 1e-3 else 1e-3))
 
-        # Roll = tilt side-to-side (dependent ONLY on AY horizontal & AX vertical)
+        # Roll = tilt side-to-side
         roll = math.degrees(math.atan2(ay_n, ax_n if abs(ax_n) > 1e-3 else 1e-3))
 
         return pitch, roll
@@ -166,23 +166,23 @@ class SensorManager:
         return abs(self._pitch_deg) <= tolerance and abs(self._roll_deg) <= tolerance
 
     def get_level_guidance(self) -> str:
-        """Clear, intuitive direction prompts for the user."""
+        """Font-safe text prompts without missing Unicode glyphs."""
         p_ok = abs(self._pitch_deg) <= self.DEFAULT_TOLERANCE
         r_ok = abs(self._roll_deg) <= self.DEFAULT_TOLERANCE
 
         if p_ok and r_ok:
-            return "✓ LEVEL - HOLD STEADY"
+            return "[OK] LEVEL - HOLD STEADY"
 
         prompts = []
         if self._pitch_deg > self.DEFAULT_TOLERANCE:
-            prompts.append("TILT DOWN ↓")
+            prompts.append("TILT DOWN (v)")
         elif self._pitch_deg < -self.DEFAULT_TOLERANCE:
-            prompts.append("TILT UP ↑")
+            prompts.append("TILT UP (^)")
 
         if self._roll_deg > self.DEFAULT_TOLERANCE:
-            prompts.append("ROTATE RIGHT ↻")
+            prompts.append("ROTATE RIGHT (>)")
         elif self._roll_deg < -self.DEFAULT_TOLERANCE:
-            prompts.append("ROTATE LEFT ↺")
+            prompts.append("ROTATE LEFT (<)")
 
         return " | ".join(prompts)
 

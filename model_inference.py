@@ -8,7 +8,6 @@ available backend (OpenCV DNN for Android/mobile, ONNX Runtime, TFLite, PyTorch,
 import os
 import numpy as np
 from typing import Optional
-from PIL import Image
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -91,7 +90,8 @@ class ModelAdapter:
         new_w = max(1, int(round(W * scale)))
         new_h = max(1, int(round(H * scale)))
 
-        resized = np.array(Image.fromarray(image).resize((new_w, new_h), Image.Resampling.BILINEAR))
+        # Optimized OpenCV resize (compatible across all Pillow versions)
+        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
         pad_left = (input_size - new_w) // 2
         pad_right = input_size - new_w - pad_left
