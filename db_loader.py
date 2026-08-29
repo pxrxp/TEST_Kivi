@@ -23,7 +23,7 @@ class SkylineDB:
         self.n_bins: int = 720
         self.loaded: bool = False
 
-    def load(self, npz_path: str, max_rows: Optional[int] = None) -> bool:
+    def load(self, npz_path: str, max_rows: Optional[int] = None, quiet: bool = False) -> bool:
         if not os.path.exists(npz_path):
             print(f"[DB] File not found: {npz_path}")
             return False
@@ -48,10 +48,11 @@ class SkylineDB:
             self.n_bins = self.horizon_matrix.shape[1]
             self.loaded = True
 
-            size_mb = os.path.getsize(npz_path) / (1024 * 1024)
-            ram_mb = (self.horizon_matrix.nbytes + self.lats.nbytes + self.lons.nbytes + self.elevations.nbytes) / (1024 * 1024)
-            print(f"[DB] Loaded {self.n_rows:,} viewpoints from {npz_path}")
-            print(f"[DB] Disk: {size_mb:.1f} MB, RAM: {ram_mb:.1f} MB")
+            if not quiet:
+                size_mb = os.path.getsize(npz_path) / (1024 * 1024)
+                ram_mb = (self.horizon_matrix.nbytes + self.lats.nbytes + self.lons.nbytes + self.elevations.nbytes) / (1024 * 1024)
+                print(f"[DB] Loaded {self.n_rows:,} viewpoints from {npz_path}")
+                print(f"[DB] Disk: {size_mb:.1f} MB, RAM: {ram_mb:.1f} MB")
             return True
 
         except Exception as e:
