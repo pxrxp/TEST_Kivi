@@ -298,8 +298,6 @@ class SkylineGeolocationApp(App):
             cam = Camera(
                 index=0,
                 resolution=(1280, 720),
-                allow_stretch=True,
-                keep_ratio=False,
                 size_hint=(1, 1),
                 pos_hint={"x": 0, "y": 0},
             )

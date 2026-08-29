@@ -87,11 +87,8 @@ class UNetDecoderBlock(nn.Module):
 
     def forward(self, x, skip):
         x = self.up(x)
-        # Resize skip using explicit scale factor if shapes differ
-        if x.shape[2:] != skip.shape[2:]:
-            skip = F.interpolate(
-                skip, scale_factor=2.0, mode="bilinear", align_corners=False
-            )
+        # Static scale factor interpolation prevents dynamic getitem shape node generation
+        skip = F.interpolate(skip, scale_factor=2.0, mode="bilinear", align_corners=False)
         x = torch.cat([x, skip], dim=1)
         x = self.conv1(x)
         x = self.conv2(x)
